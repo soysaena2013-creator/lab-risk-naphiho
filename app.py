@@ -38,6 +38,18 @@ def calculate_likelihood_by_percentage(percentage):
     else:
         return 4  # เกิดขึ้นเป็นประจำ (>10%)
 
+# ฟังก์ชันแปลงระดับความรุนแรงทางคลินิก A-I เป็นคะแนน Consequence (1-4) เพื่อใช้ใน Risk Matrix
+def map_clinical_severity_to_score(level):
+    if level in ["A", "B", "C"]:
+        return 1  # ต่ำ
+    elif level in ["D", "E", "F"]:
+        return 2  # ปานกลาง
+    elif level in ["G", "H"]:
+        return 3  # สูง
+    elif level == "I":
+        return 4  # สูงมาก
+    return 1
+
 # 3. จัดเตรียม Master Data รายการความเสี่ยงย่อยตามเอกสารโรงพยาบาล
 non_clinical_subtypes = {
     "สิ่งแวดล้อมทางกายภาพ": [
@@ -151,7 +163,7 @@ clinical_subtypes = {
     ]
 }
 
-# กำหนดรายชื่อแผนกทั้งหมดให้เป็น Master List เพื่อใช้งานร่วมกันอย่างถูกต้อง
+# กำหนดรายชื่อแผนกทั้งหมด
 department_list = [
     "Lab", "IPD", "OPD", "ER", "LR", "VIP", "ปฐมภูมิและองค์รวม", 
     "จิตเวชและยาเสพติด", "NCD", "ARI", "OR", "ยานพาหนะ", "เวรเจาะเลือด DM",
@@ -181,7 +193,7 @@ with tab1:
     st.markdown("---")
     st.subheader("รายละเอียดความเสี่ยงจำเพาะ")
     
-    # แยก UI และกล่องความรุนแรงตามประเภทความเสี่ยงอย่างชัดเจน
+    # แยก UI ความรุนแรงทางคลินิก (แยกทีละตัวอักษร A-I อย่างสมบูรณ์) และทางทั่วไปอย่างเด็ดขาด
     if risk_type == "ความเสี่ยงทางคลินิก (Clinical Risk)":
         col_cl1, col_cl2 = st.columns(2)
         with col_cl1:
@@ -189,12 +201,18 @@ with tab1:
             risk_subtype = st.selectbox("ระบุความเสี่ยงย่อยทางคลินิก", clinical_subtypes[phase_or_cat])
         with col_cl2:
             event_type = st.selectbox("รูปแบบเหตุการณ์", ["Near Miss (เกือบพลาด - ดักจับได้ทันก่อนถึงผู้ป่วย)", "Miss / Incident (ผิดพลาด - หลุดไปถึงตัวผู้ป่วยแล้ว)"])
-            # แสดงเฉพาะเกณฑ์ทางคลินิก (Clinical Severity)
-            severity = st.selectbox("ระดับความรุนแรงทางคลินิก (Clinical Severity)", [
-                "1: ต่ำ (ระดับความรุนแรง A, B, C)", 
-                "2: ปานกลาง (ระดับความรุนแรง D, E, F)", 
-                "3: สูง (ระดับความรุนแรง G, H)", 
-                "4: สูงมาก (ระดับความรุนแรง I)"
+            
+            # แก้ไขส่วนระดับความรุนแรงทางคลินิก แยกทีละตัวอักษร A - I ไม่จับกลุ่ม
+            severity = st.selectbox("ระดับความรุนแรงทางคลินิก (Clinical Severity - Severity Level)", [
+                "ระดับ A: ยังไม่เกิดกับผู้ป่วย แต่มีโอกาสที่จะเกิดความคลาดเคลื่อน",
+                "ระดับ B: เกิดความคลาดเคลื่อนขึ้นแล้ว แต่ยังไม่ถึงตัวผู้ป่วย",
+                "ระดับ C: เกิดความคลาดเคลื่อนถึงตัวผู้ป่วยแล้ว แต่ไม่ทำให้เกิดอันตราย",
+                "ระดับ D: ความคลาดเคลื่อนถึงตัวผู้ป่วย ส่งผลให้ต้องติดตามเฝ้าระวังเพิ่มเติม",
+                "ระดับ E: ความคลาดเคลื่อนทำให้เกิดอันตรายชั่วคราว และต้องการการรักษาพยาบาลเพิ่มเติม",
+                "ระดับ F: ความคลาดเคลื่อนทำให้เกิดอันตรายชั่วคราว และต้องนอนโรงพยาบาลหรืออยู่นานขึ้น",
+                "ระดับ G: ความคลาดเคลื่อนส่งผลให้เกิดอันตรายถาวรแก่ผู้ป่วย",
+                "ระดับ H: ความคลาดเคลื่อนส่งผลให้ผู้ป่วยเกือบเสียชีวิต (ต้องกู้ชีพ)",
+                "ระดับ I: ความคลาดเคลื่อนส่งผลให้ผู้ป่วยเสียชีวิต"
             ])
     else:
         col_nc1, col_nc2 = st.columns(2)
@@ -203,19 +221,24 @@ with tab1:
             risk_subtype = st.selectbox("ระบุความเสี่ยงย่อยทั่วไป", non_clinical_subtypes[phase_or_cat])
         with col_nc2:
             event_type = "Incident"
-            # แสดงเฉพาะเกณฑ์ทั่วไป (Non-clinical Severity)
+            
+            # ความรุนแรงทั่วไปอิงเกณฑ์มูลค่าและความเสียหายระดับ 1-4
             severity = st.selectbox("ระดับความรุนแรงทั่วไป (Non-clinical Severity)", [
-                "1: ต่ำ (ผลกระทบระดับน้อยมาก เสียหาย < 5,000 บาท)",
-                "2: ปานกลาง (ผลกระทบระดับปานกลาง เสียหาย 5,000 - 50,000 บาท)",
-                "3: สูง (ผลกระทบระดับสูง เสียหาย 50,001 - 500,000 บาท)",
-                "4: สูงมาก (ผลกระทบระดับรุนแรง เสียหาย > 500,000 บาท ขึ้นไป)"
+                "ระดับ 1: ต่ำ (ผลกระทบระดับน้อยมาก เสียหาย < 5,000 บาท)",
+                "ระดับ 2: ปานกลาง (ผลกระทบระดับปานกลาง เสียหาย 5,000 - 50,000 บาท)",
+                "ระดับ 3: สูง (ผลกระทบระดับสูง เสียหาย 50,001 - 500,000 บาท)",
+                "ระดับ 4: สูงมาก (ผลกระทบระดับรุนแรง เสียหาย > 500,000 บาท ขึ้นไป)"
             ])
 
     st.markdown("<br>", unsafe_allow_html=True)
     submit_btn = st.button("🚀 บันทึกรายงานความเสี่ยง เข้าสู่ระบบ")
     
     if submit_btn:
-        severity_value = int(severity.split(":")[0]) if ":" in severity else 1
+        # สกัดค่าความรุนแรงตัวย่อไปบันทึก (เช่น "ระดับ A" -> "A" / "ระดับ 1" -> "1")
+        if risk_type == "ความเสี่ยงทางคลินิก (Clinical Risk)":
+            severity_value = severity.split(":")[0].replace("ระดับ ", "").strip()  # จะได้ค่าเป็น 'A', 'B', 'C', ..., 'I'
+        else:
+            severity_value = severity.split(":")[0].replace("ระดับ ", "").strip()  # จะได้ค่าเป็น '1', '2', '3', '4'
         
         new_row = pd.DataFrame([{
             "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -247,6 +270,7 @@ with tab2:
         df_raw['Date_Parsed'] = pd.to_datetime(df_raw['Date'])
         df_raw['Month_Year'] = df_raw['Date_Parsed'].dt.strftime("%B %Y")
         
+        # จัดกลุ่มข้อมูลรายเดือนเพื่อเตรียมให้ผู้ดูแลมาทำการตรวจสอบและเคาะประเมิน
         summary_view = df_raw.groupby(['Month_Year', 'Department', 'Risk_Type', 'Phase_or_Category', 'Risk_Subtype']).size().reset_index(name='Count_Dept')
         
         st.subheader("📊 ตารางสถิติจำนวนครั้งแยกรายแผนกประจำเดือน")
@@ -262,6 +286,7 @@ with tab2:
         
         row_data = summary_view.loc[selected_index]
         
+        # คำนวณหาความถี่สะสมย้อนหลัง 3 เดือน เพื่อเสนอแนะระดับ Likelihood อัตโนมัติ
         target_month_dt = datetime.strptime(row_data['Month_Year'], "%B %Y")
         three_months_ago = target_month_dt - timedelta(days=90)
         
@@ -289,11 +314,46 @@ with tab2:
         """, unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
         
-        # ปรับการอธิบายตัวเลือกใน Slider ตอนประเมินหน้า Risk Manager ให้สอดคล้องกับประเภทความเสี่ยงที่เลือกด้วย
-        is_clinical = (row_data['Risk_Type'] == "ความเสี่ยงทางคลินิก (Clinical Risk)")
-        severity_label = "Consequence Score (ทางคลินิก: 1=A-C, 2=D-F, 3=G-H, 4=I)" if is_clinical else "Consequence Score (ทั่วไป: 1=ต่ำ, 2=กลาง, 3=สูง, 4=รุนแรงมาก)"
+        # สกัดระดับความรุนแรงจริง (A-I หรือ 1-4) จากข้อมูลดิบล่าสุดในเดือนนั้นเพื่อไกด์ให้กับ Risk Manager
+        latest_items = df_raw[
+            (df_raw['Month_Year'] == row_data['Month_Year']) & 
+            (df_raw['Risk_Subtype'] == row_data['Risk_Subtype']) &
+            (df_raw['Department'] == row_data['Department'])
+        ]
         
-        s_score = st.slider(f"ระบุระดับความรุนแรงสำหรับแผนก {row_data['Department']}\n({severity_label})", 1, 4, 2)
+        recorded_severities = latest_items['Severity'].unique()
+        severity_display_str = ", ".join(map(str, recorded_severities))
+        
+        is_clinical = (row_data['Risk_Type'] == "ความเสี่ยงทางคลินิก (Clinical Risk)")
+        
+        if is_clinical:
+            st.info(f"🔍 ข้อมูลระดับความรุนแรง (Severity) ที่ผู้ใช้งานกรอกเข้ามาในเดือนนี้คือ: **ระดับ {severity_display_str}**")
+            # ถ้าเป็นคลินิก จะแสดงสไลเดอร์ Consequence อิงตามการแปลงกลุ่ม A-I
+            st.markdown("""
+            **เกณฑ์แปลงจากระดับจริงเพื่อใช้คำนวณใน Matrix (Consequence Score):**
+            * ระดับ **A, B, C** = 1 คะแนน (ต่ำ)
+            * ระดับ **D, E, F** = 2 คะแนน (ปานกลาง)
+            * ระดับ **G, H** = 3 คะแนน (สูง)
+            * ระดับ **I** = 4 คะแนน (สูงมาก)
+            """)
+            
+            # คำนวณตั้งค่าเริ่มต้นตามระดับจริงที่กรอกมาล่าสุด
+            default_score = 1
+            if len(recorded_severities) > 0:
+                default_score = map_clinical_severity_to_score(recorded_severities[0])
+                
+            s_score = st.slider("ระบุระดับ Consequence Score (1-4) เพื่อแปลงเข้าแกน Risk Matrix", 1, 4, default_score)
+            eval_severity_str = severity_display_str  # บันทึกระดับจริงเก็บไว้ด้วย
+        else:
+            st.info(f"🔍 ข้อมูลระดับความรุนแรงที่กรอกเข้ามาในระบบคือ: **ระดับ {severity_display_str}**")
+            default_score = 1
+            if len(recorded_severities) > 0:
+                try:
+                    default_score = int(recorded_severities[0])
+                except:
+                    default_score = 1
+            s_score = st.slider("ระบุระดับ Consequence Score (1-4)", 1, 4, default_score)
+            eval_severity_str = f"ระดับ {s_score}"
 
         eval_submit = st.button("💾 บันทึกผลประเมินเข้าสู่แดชบอร์ด")
         
@@ -308,7 +368,7 @@ with tab2:
                 "Risk_Subtype": row_data['Risk_Subtype'],
                 "Count": int(row_data['Count_Dept']),
                 "Likelihood": computed_likelihood,
-                "Severity": s_score,
+                "Severity": eval_severity_str,  # บันทึกระดับความรุนแรงจริง (ตัวอักษร A-I หรือ ระดับ 1-4) เพื่อสืบค้นย้อนกลับได้ง่าย
                 "Risk_Score": total_risk_score
             }])
             
@@ -320,7 +380,7 @@ with tab2:
                 ]
             
             st.session_state.monthly_summary = pd.concat([st.session_state.monthly_summary, new_eval], ignore_index=True)
-            st.success(f"ประเมินสำเร็จ! [โอกาสเกิด L: {computed_likelihood}] + [ความรุนแรง C: {s_score}] = คะแนนรวม Risk Score {total_risk_score} คะแนน")
+            st.success(f"ประเมินสำเร็จ! [ความถี่ L: {computed_likelihood}] + [ความรุนแรง C (แปลงแล้ว): {s_score}] = Risk Score {total_risk_score} คะแนน (ระดับจริงคือ: {eval_severity_str})")
 
         st.subheader("📋 ตารางผลการประเมินประจำเดือนที่สรุปส่งขึ้นแดชบอร์ด")
         st.dataframe(st.session_state.monthly_summary, use_container_width=True)
@@ -358,7 +418,7 @@ with tab3:
             col_g1, col_g2 = st.columns([6, 4])
             
             with col_g1:
-                st.subheader("📌 อันดับความเสี่ยงเร่งด่วนประจำเดือน (ตามผลรวม 2-8 คะแนน)")
+                st.subheader("📌 อันดับความเสี่ยงเร่งด่วนประจำเดือน")
                 df_sorted = df_filtered.sort_values(by="Risk_Score", ascending=True)
                 
                 colors = []
@@ -367,10 +427,16 @@ with tab3:
                     elif score >= 5: colors.append('darkorange')    # ส้ม (สูง)
                     elif score == 4: colors.append('gold')          # เหลือง (ปานกลาง)
                     else: colors.append('forestgreen')              # เขียว (ต่ำ)
-                    
+                
+                # แสดงแถบกราฟ พร้อมระบุระดับความรุนแรงจริง (เช่น ระดับ A, ระดับ E) ต่อท้ายข้อความเพื่อให้เห็นชัดเจนโดยไม่ต้องสืบค้นย้อนหลัง
+                labels = [
+                    f"{row['Risk_Subtype']} ({row['Department']}) [Severity: {row['Severity']}]" 
+                    for _, row in df_sorted.iterrows()
+                ]
+                
                 fig_bar = go.Figure(go.Bar(
                     x=df_sorted['Risk_Score'],
-                    y=df_sorted['Risk_Subtype'] + " (" + df_sorted['Department'] + ")",
+                    y=labels,
                     orientation='h',
                     marker_color=colors,
                     text=df_sorted['Risk_Score'],
@@ -378,7 +444,7 @@ with tab3:
                 ))
                 fig_bar.update_layout(
                     xaxis_title="คะแนนระดับความเสี่ยงรวม (Risk Score: 2-8)",
-                    yaxis_title="หัวข้อความเสี่ยงย่อย (แผนก)",
+                    yaxis_title="หัวข้อความเสี่ยงย่อย (แผนก) [ระดับความรุนแรงจริง]",
                     height=500
                 )
                 st.plotly_chart(fig_bar, use_container_width=True)
@@ -392,10 +458,28 @@ with tab3:
             st.markdown("---")
             st.subheader("🧱 4x4 Interactive Risk Matrix (พิกัดตามระดับคะแนนผลรวม L + C)")
             
+            # คำนวณสถิติเพื่อลงจุดบน Risk Matrix โดยแปลงความรุนแรงกลับเป็นพิกัดแกน 1-4
             matrix_df = pd.DataFrame(0, index=[4, 3, 2, 1], columns=[1, 2, 3, 4])
             
             for _, row in df_filtered.iterrows():
-                l, s = int(row['Likelihood']), int(row['Severity'])
+                l = int(row['Likelihood'])
+                # ใช้ฟังก์ชันเพื่อแปลงระดับจริง (A-I หรือตัวเลข) มาเป็นตัวระบุพิกัด 1-4 ใน Matrix
+                sev_val = str(row['Severity'])
+                if sev_val in ["A", "B", "C"]:
+                    s = 1
+                elif sev_val in ["D", "E", "F"]:
+                    s = 2
+                elif sev_val in ["G", "H"]:
+                    s = 3
+                elif sev_val == "I":
+                    s = 4
+                else:
+                    # กรณีเป็นความเสี่ยงทั่วไป เช่น "ระดับ 2" หรือค่าตัวเลข
+                    try:
+                        s = int(sev_val.replace("ระดับ", "").strip())
+                    except:
+                        s = 1
+                        
                 if s in matrix_df.index and l in matrix_df.columns:
                     matrix_df.loc[s, l] += 1
             
@@ -410,7 +494,7 @@ with tab3:
                 </tr>
                 
                 <tr style="border-bottom: 1px solid gray;">
-                    <td style="background-color: #f2f2f2; padding: 12px; border-right: 2px solid black;">สูงมาก (4)</td>
+                    <td style="background-color: #f2f2f2; padding: 12px; border-right: 2px solid black;">สูงมาก (4) [ระดับ I หรือ ระดับ 4]</td>
                     <td style="background-color: #ff9900; color: white; border-right: 1px solid black;">
                         <div>คะแนน 5 (ส้ม)</div>
                         <div style="font-size: 20px; margin-top:5px;">{matrix_df.loc[4, 1]} เรื่อง</div>
@@ -430,7 +514,7 @@ with tab3:
                 </tr>
                 
                 <tr style="border-bottom: 1px solid gray;">
-                    <td style="background-color: #f2f2f2; padding: 12px; border-right: 2px solid black;">สูง (3)</td>
+                    <td style="background-color: #f2f2f2; padding: 12px; border-right: 2px solid black;">สูง (3) [ระดับ G-H หรือ ระดับ 3]</td>
                     <td style="background-color: #ffff00; color: black; border-right: 1px solid black;">
                         <div>คะแนน 4 (เหลือง)</div>
                         <div style="font-size: 20px; margin-top:5px;">{matrix_df.loc[3, 1]} เรื่อง</div>
@@ -450,7 +534,7 @@ with tab3:
                 </tr>
                 
                 <tr style="border-bottom: 1px solid gray;">
-                    <td style="background-color: #f2f2f2; padding: 12px; border-right: 2px solid black;">ปานกลาง (2)</td>
+                    <td style="background-color: #f2f2f2; padding: 12px; border-right: 2px solid black;">ปานกลาง (2) [ระดับ D-F หรือ ระดับ 2]</td>
                     <td style="background-color: #99cc33; color: white; border-right: 1px solid black;">
                         <div>คะแนน 3 (เขียว)</div>
                         <div style="font-size: 20px; margin-top:5px;">{matrix_df.loc[2, 1]} เรื่อง</div>
@@ -470,7 +554,7 @@ with tab3:
                 </tr>
                 
                 <tr>
-                    <td style="background-color: #f2f2f2; padding: 12px; border-right: 2px solid black;">ต่ำ (1)</td>
+                    <td style="background-color: #f2f2f2; padding: 12px; border-right: 2px solid black;">ต่ำ (1) [ระดับ A-C หรือ ระดับ 1]</td>
                     <td style="background-color: #54b254; color: white; border-right: 1px solid black;">
                         <div>คะแนน 2 (เขียว)</div>
                         <div style="font-size: 20px; margin-top:5px;">{matrix_df.loc[1, 1]} เรื่อง</div>
