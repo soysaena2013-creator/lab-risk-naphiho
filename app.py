@@ -1,0 +1,410 @@
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from datetime import datetime
+
+# 1. ตั้งค่าหน้าเว็บให้แสดงผลเต็มจอแบบสวยงาม
+st.set_page_config(
+    page_title="ระบบบันทึกความเสี่ยง - รพ.นาโพธิ์", 
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+st.title("🏥 ระบบบันทึกและติดตามความเสี่ยงทางห้องปฏิบัติการ")
+st.subheader("กลุ่มงานเทคนิคการแพทย์ โรงพยาบาลนาโพธิ์")
+st.markdown("---")
+
+# 2. จำลองฐานข้อมูลภายในระบบ (Session State) เพื่อเก็บข้อมูลชั่วคราว
+if 'raw_data' not in st.session_state:
+    st.session_state.raw_data = pd.DataFrame(columns=[
+        "Timestamp", "Date", "Time", "Shift", "Department", 
+        "Risk_Type", "Phase_or_Category", "Risk_Subtype", "Event_Type", "Severity"
+    ])
+
+if 'monthly_summary' not in st.session_state:
+    st.session_state.monthly_summary = pd.DataFrame(columns=[
+        "Month_Year", "Department", "Risk_Type", "Phase_or_Category", "Risk_Subtype", "Count", "Likelihood", "Severity", "Risk_Score"
+    ])
+
+# 3. จัดเตรียม Master Data รายการความเสี่ยงย่อยตามเอกสารโรงพยาบาล
+non_clinical_subtypes = {
+    "สิ่งแวดล้อมทางกายภาพ": [
+        "อุณหภูมิห้องสูงหรือแกว่งเกินไป (Temperature Fluctuation)",
+        "ความชื้นสัมพัทธ์ไม่เหมาะสม (Improper Humidity)",
+        "แสงสว่างไม่เพียงพอ (Poor Illumination )",
+        "มลพิษทางเสียง (Noise Pollution)",
+        "การระบายไอสารเคมีไม่ดี (Inadequate Chemical Fume Ventilation)",
+        "ความเสี่ยงต่อการเกิดเพลิงไหม้ (Fire Hazards)"
+    ],
+    "ระบบ IT/คอมพิวเตอร์": [
+        "ระบบอินเตอร์เฟสล่ม (Interface Downtime)",
+        "ข้อมูลสูญหายเนื่องจากไม่มีการสำรองข้อมูล (Lack of Data Backup)",
+        "การโจมตีด้วยมัลแวร์เรียกค่าไถ่ (Ransomware Attack)",
+        "ระบบ HIS ล่ม",
+        "ระบบ LIS ล่ม",
+        "ภัยคุกคามจากภายในและสิทธิการเข้าถึง (Unauthorized Access)",
+        "ช่องโหว่จากอุปกรณ์ภายนอก (Removable Media Vulnerability): เจ้าหน้าที่นำแฟลชไดรฟ์ (USB) ส่วนตัวมาเสียบกับคอมพิวเตอร์"
+    ],
+    "ระบบสาธารณูปโภค": [
+        "กระแสไฟฟ้ากระชาก/ดับชั่วขณะ (Power Surges & Sags)",
+        "ระบบสำรองไฟ (UPS) ทำงานล้มเหลวหรือไม่เพียงพอ",
+        "เต้ารับไฟฟ้า (Plugs/Outlets) เกินกำลังหรืออยู่ใกล้จุดเสี่ยง",
+        "คุณภาพน้ำบริสุทธิ์ต่ำกว่ามาตรฐาน (Water Quality Degradation)",
+        "การปนเปื้อนของเชื้อแบคทีเรียในระบบท่อน้ำ (Bacterial Biofilm)",
+        "แรงดันน้ำไม่คงที่หรือน้ำประปาหยุดไหล (Water Pressure & Interruption)",
+        "เครื่องปรับอากาศชำรุด",
+        "ท่อน้ำทิ้งสารเคมี/น้ำเสียติดเชื้ออุดตันหรือรั่วซึม",
+        "ไฟดับเป็นเวลานานมากกว่า 1 ชั่วโมง",
+        "ส้วมเต็มหรือตัน"
+    ],
+    "พฤติกรรมบริการและการสื่อสาร": [
+        "การใช้คำพูดและน้ำเสียงที่ไม่เหมาะสม (Inappropriate Verbal & Tone)",
+        "ใช้ศัพท์เทคนิคทางการแพทย์ ที่เข้าใจยากในการอธิบายการปฏิบัติตัว",
+        "การแสดงออกทางสีหน้าบึ้งตึง สายตาละเลยไม่สบตา (Poor eye contact)",
+        "การปฏิเสธหรือละเลยการให้ข้อมูล (Information Neglect)",
+        "เจ้าหน้าที่เจาะเลือดด้วยความรีบร้อน รุนแรง หรือแสดงท่าทีรำคาญ",
+        "การละเลยการรักษาความเพิกเฉยต่อความกลัวของผู้ป่วย",
+        "ตะโกนเรียกชื่อผู้ป่วยพร้อมบอกชื่อสิ่งส่งตรวจหรือผลตรวจที่น่าอายในที่สาธารณะ",
+        "เจ้าหน้าที่ควบคุมอารมณ์ไม่ได้ (Low emotional quota) เมื่อเผชิญหน้ากับผู้รับบริการที่กำลังโกรธ",
+        "การประชดประชัน กระแทกกระทั้นสิ่งของ เพื่อแสดงออกถึงความไม่พอใจ",
+        "การใช้น้ำเสียงหรือคำพูดเชิงตำหนิพยาบาลหรือเจ้าหน้าที่ส่งแล็บอย่างรุนแรงเมื่อส่งสิ่งส่งตรวจผิดพลาด",
+        "แสดงพฤติกรรมบริการที่ดีกับผู้ป่วยบางกลุ่ม แต่ละเลยหรือปฏิบัติด้วยท่าทีที่แย่กว่ากับผู้ป่วยกลุ่มอื่น",
+        "ไม่อยู่ประจำจุดบริการในเวลาที่กำหนด หรือปล่อยให้ผู้ป่วยยืนรอหน้าห้องแล็บเป็นเวลานาน",
+        "พขร. 不นำเลือดที่ผ่านการ cross match แล้วกลับมาด้วย",
+        "พขร. ลืมนำถุงเลือดลงจากรถ",
+        "พขร. นำส่งเลือดที่ผ่านการ cross match แล้ว ล่าช้า",
+        "ปลดถุงเลือด หมดอายุ ไม่ได้ใช้"
+    ]
+}
+
+clinical_subtypes = {
+    "Pre-analytical": [
+        "สิ่งส่งตรวจน้อยเกินไป (Inadequate volume)",
+        "สิ่งส่งตรวจเป็นลิ่มเลือด (Clot)",
+        "สิ่งส่งตรวจเม็ดเลือดแดงแตก (Hemolysis)",
+        "สิ่งส่งตรวจผิดคน/ติดป้ายชื่อผิดคน สลับคน (Mislabel)",
+        "ไม่ติดสติ๊กเกอร์ชื่อ สกุล คนไข้ /ไม่ระบุตัวผู้ป่วย (Unlabeled Specimen)",
+        "เก็บสิ่งส่งตรวจใส่หลอดหรือภาชนะผิดชนิด",
+        "เก็บสิ่งส่งตรวจผิดตำแหน่ง (ข้างที่ให้ IV)",
+        "เก็บสิ่งส่งตรวจผิดเวลา",
+        "เก็บสิ่งส่งตรวจซ้ำ",
+        "เก็บสิ่งส่งตรวจไม่ได้ (เจาะเลือดไม่ได้ เจาะยาก)",
+        "ปิดฝาหลอดเก็บสิ่งส่งตรวจสลับกัน",
+        "คีย์คำสั่งตรวจ/ออเดอร์ของแพทย์ในระบบคอมพิวเตอร์ (HIS/LIS) ผิดพลาด",
+        "ส่งสิ่งส่งตรวจแต่ไม่มีใบขอส่งตรวจหรือไม่คีย์ส่งตรวจในระบบ (request form)",
+        "สิ่งส่งตรวจหาย",
+        "สิ่งส่งตรวจหกเลอะเทอะขั้นตอนนำส่ง",
+        "สิ่งส่งตรวจหก เสียหาย ระหว่างเตรียมตรวจวิเคราะห์",
+        "ผู้ป่วยปฏิบัติตัวไม่ถูกต้องก่อนเจาะเลือด เช่น ไม่งดอาหารก่อนตรวจน้ำตาล",
+        "เวลาในการขนส่งล่าช้า (Delayed Transport)",
+        "การนำส่งสิ่งส่งตรวจไม่เหมาะสม เช่น ไม่ห่อกันแสงในหลอดส่งตรวจ MB",
+        "เจ้าหน้าที่ห้องแล็บคีย์รับสิ่งส่งตรวจเข้าระบบ LIS ผิดพลาด",
+        "ใช้ความเร็ว (RPM/RCF) หรือเวลาในการปั่นไม่เหมาะสม"
+    ],
+    "Analytical": [
+        "เครื่องตรวจวิเคราะห์ Biochemistry Error / ขันข้อง",
+        "เครื่องตรวจวิเคราะห์ CBC Error / ขัดข้อง",
+        "เครื่องตรวจวิเคราะห์ PT&INR Error / ขัดข้อง",
+        "เครื่องตรวจวิเคราะห์ Troponin I Error / ขัดข้อง",
+        "เครื่องตรวจวิเคราะห์ Urine reader Error / ขัดข้อง",
+        "เครื่องตรวจวิเคราะห์ MB Error / ขัดข้อง",
+        "เครื่องเพาะเชื้อในเลือด/Hemoculture ขัดข้อง ไม่พร้อมใช้งาน",
+        "เครื่องมือสนับสนุนทางห้องปฏิบัติการชำรุด ไม่พร้อมใช้งาน",
+        "ผลควบคุมคุณภาพ (IQC) สาขาเคมีคลินิก ไม่ผ่านเกณฑ์",
+        "ผลควบคุมคุณภาพ (IQC) สาขาโลหิตวิทยา ไม่ผ่านเกณฑ์",
+        "ผลควบคุมคุณภาพ (IQC) สาขาภูมิคุ้มกันวิทยา ไม่ผ่านเกณฑ์",
+        "ผลควบคุมคุณภาพ (IQC) สาขาจุลทรรศนศาสตร์คลินิก ไม่ผ่านเกณฑ์",
+        "ผลควบคุมคุณภาพ (IQC) สาขาจุลชีววิทยา ไม่ผ่านเกณฑ์",
+        "ผลควบคุมคุณภาพ (IQC) สาขาธนาคารเลือด ไม่ผ่านเกณฑ์",
+        "ผลควบคุมคุณภาพ (EQA) สาขาเคมีคลินิก ไม่ผ่านเกณฑ์",
+        "ผลควบคุมคุณภาพ (EQA) สาขาโลหิตวิทยา ไม่ผ่านเกณฑ์",
+        "ผลควบคุมคุณภาพ (EQA) สาขาภูมิคุ้มกันวิทยา ไม่ผ่านเกณฑ์",
+        "ผลควบคุมคุณภาพ (EQA) สาขาจุลทรรศนศาสตร์คลินิก ไม่ผ่านเกณฑ์",
+        "ผลควบคุมคุณภาพ (EQA) สาขาจุลชีววิทยา ไม่ผ่านเกณฑ์",
+        "ผลควบคุมคุณภาพ (EQA) สาขาธนาคารเลือด ไม่ผ่านเกณฑ์",
+        "สารเคมี/น้ำยา หมดอายุหรือเสื่อมสภาพ",
+        "ชุดตรวจหมดอายุ",
+        "ตรวจวิเคราะห์ผิดวิธี ผิดขั้นตอน",
+        "เทคนิคการตรวจวิเคราะห์ไม่ถูกต้อง"
+    ],
+    "Post-analytical": [
+        "รายงานผลผิดคน",
+        "รายงานผลผิดพลาด ตัวเลขหรือตัวอักษรผิด",
+        "รายงานผลล่าช้าเกินเวลาที่กำหนด (TAT เกิน)",
+        "ไม่ได้โทรแจ้งผลวิกฤต (Critical value)",
+        "รายงานค่าวิกฤติเกินเวลาที่กำหนด",
+        "รายงานผลไม่ครบถ้วน",
+        "เกิดอาการไม่พึงประสงค์จากการให้เลือด (Transfusion Reaction)",
+        "การให้เลือดผิดคน (Wrong Blood Transfused)"
+    ]
+}
+
+# 4. สร้าง Tab เมนูหลักในการใช้งาน
+tab1, tab2, tab3 = st.tabs(["📝 1. บันทึกความเสี่ยงออนไลน์", "🧮 2. ประเมินรายเดือน (Risk Manager)", "📊 3. แดชบอร์ดและ Risk Matrix"])
+
+# ==========================================
+# TAB 1: หน้าบันทึกความเสี่ยงออนไลน์
+# ==========================================
+with tab1:
+    st.header("แบบฟอร์มรายงานอุบัติการณ์และความเสี่ยง")
+    with st.form("risk_entry_form", clear_on_submit=True):
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            date_evt = st.date_input("1. วันที่เกิดความเสี่ยง", datetime.now())
+            time_evt = st.time_input("2. เวลาที่เกิดความเสี่ยง")
+        with c2:
+            shift_evt = st.selectbox("3. ช่วงเวรที่เกิดความเสี่ยง", ["เช้า", "บ่าย", "ดึก"])
+            dept_evt = st.selectbox("4. หน่วยงานที่ทำให้เกิดความเสี่ยง", [
+                "Lab", "IPD", "OPD", "ER", "LR", "VIP", "ปฐมภูมิและองค์รวม", 
+                "จิตเวชและยาเสพติด", "NCD", "ARI", "OR", "ยานพาหนะ", "เวรเจาะเลือด DM"
+            ])
+        with c3:
+            risk_type = st.radio("5. ประเภทความเสี่ยง", ["ความเสี่ยงทางคลินิก (Clinical Risk)", "ความเสี่ยงทั่วไป (Non-Clinical Risk)"])
+
+        st.markdown("---")
+        st.subheader("รายละเอียดความเสี่ยงจำเพาะ")
+        
+        # จัดการ Nested Logic (ตัวเลือกย่อยจะเปลี่ยนตามประเภทความเสี่ยงที่เลือกด้านบนอัตโนมัติ)
+        if risk_type == "ความเสี่ยงทางคลินิก (Clinical Risk)":
+            col_cl1, col_cl2 = st.columns(2)
+            with col_cl1:
+                phase_or_cat = st.selectbox("ขั้นตอนที่เกิดความเสี่ยง (Phase)", ["Pre-analytical", "Analytical", "Post-analytical"])
+                risk_subtype = st.selectbox("ระบุความเสี่ยงย่อยทางคลินิก", clinical_subtypes[phase_or_cat])
+            with col_cl2:
+                event_type = st.selectbox("รูปแบบเหตุการณ์", ["Near Miss (เกือบพลาด - ดักจับได้ทันก่อนถึงผู้ป่วย)", "Miss / Incident (ผิดพลาด - หลุดไปถึงตัวผู้ป่วยแล้ว)"])
+                severity = st.selectbox("ระดับความรุนแรงทางคลินิก (Severity)", [
+                    "A: ยังไม่เกิดความเสี่ยง แต่มีโอกาสเกิด", "B: เกิดขึ้นแล้ว แต่ไม่ถึงผู้ป่วย (ดักจับได้ก่อน)",
+                    "C: ถึงผู้ป่วย แต่ไม่ทำให้ผู้ป่วยได้รับอันตราย", "D: ถึงผู้ป่วย ต้องเฝ้าระวัง แต่ไม่เกิดอันตรายถาวร",
+                    "E: เกิดอันตรายชั่วคราว ต้องให้การรักษาพยาบาล", "F: เกิดอันตรายชั่วคราว ต้องนอน รพ. หรืออยู่นานขึ้น",
+                    "G: เกิดอันตรายถาวรแก่ผู้ป่วย", "H: ต้องปั๊มหัวใจ/ช่วยชีวิต", "I: ผู้ป่วยเสียชีวิตจากความผิดพลาด"
+                ])
+        else:
+            col_nc1, col_nc2 = st.columns(2)
+            with col_nc1:
+                phase_or_cat = st.selectbox("ลักษณะความเสี่ยงทั่วไป", ["สิ่งแวดล้อมทางกายภาพ", "ระบบ IT/คอมพิวเตอร์", "ระบบสาธารณูปโภค", "พฤติกรรมบริการและการสื่อสาร"])
+                risk_subtype = st.selectbox("ระบุความเสี่ยงย่อยทั่วไป", non_clinical_subtypes[phase_or_cat])
+            with col_nc2:
+                event_type = "Incident" # Non-clinical นับเป็นเหตุการณ์ปกติ
+                severity = st.selectbox("ระดับความรุนแรงทั่วไป (Severity)", [
+                    "1 (ต่ำมาก - เสียหายน้อยกว่า 5,000 บาท / งานชะงัก < 30 นาที)",
+                    "2 (ต่ำ - เสียหาย 5,000 - 50,000 บาท / งานชะงัก 30 นาที - 3 ชม.)",
+                    "3 (กลาง - เสียหาย 50,001 - 500,000 บาท / งานชะงัก 3 - 24 ชม.)",
+                    "4 (สูง - เสียหาย > 500,000 บาท / งานชะงัก > 24 ชม. หรือมีผู้พิการ/เสียชีวิต)"
+                ])
+
+        submit_btn = st.form_submit_button("🚀 บันทึกรายงานความเสี่ยง")
+        
+        if submit_btn:
+            new_row = pd.DataFrame([{
+                "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "Date": date_evt.strftime("%Y-%m-%d"),
+                "Time": time_evt.strftime("%H:%M:%S"),
+                "Shift": shift_evt,
+                "Department": dept_evt,
+                "Risk_Type": risk_type,
+                "Phase_or_Category": phase_or_cat,
+                "Risk_Subtype": risk_subtype,
+                "Event_Type": event_type,
+                "Severity": severity
+            }])
+            st.session_state.raw_data = pd.concat([st.session_state.raw_data, new_row], ignore_index=True)
+            st.success("🎉 บันทึกรายงานอุบัติการณ์เข้าสู่ระบบฐานข้อมูลสำเร็จแล้ว!")
+
+    # แสดงตารางข้อมูลดิบด้านล่างฟอร์ม
+    st.markdown("### 📋 รายการข้อมูลดิบที่ถูกบันทึกในระบบ")
+    st.dataframe(st.session_state.raw_data, use_container_width=True)
+
+# ==========================================
+# TAB 2: หน้าสรุปและประเมินรายเดือนสำหรับ Risk Manager
+# ==========================================
+with tab2:
+    st.header("🧮 ส่วนงานประเมินสถิติและเคาะคะแนน Risk Matrix")
+    
+    if st.session_state.raw_data.empty:
+        st.info("💡 ยังไม่มีข้อมูลดิบถูกบันทึกเข้ามาในระบบ กรุณากรอกข้อมูลในคอลัมน์ Tab ที่ 1 ก่อนนะครับ")
+    else:
+        # สร้างคอลัมน์ เดือน/ปี จากข้อมูลวันที่เพื่อใช้จัดกลุ่ม
+        df_raw = st.session_state.raw_data.copy()
+        df_raw['Month_Year'] = df_raw['Date'].apply(lambda x: datetime.strptime(x, "%Y-%m-%d").strftime("%B %Y"))
+        
+        # 1. ระบบดึงข้อมูลมาทำการคัดกลุ่มและนับความถี่ (COUNTIFS แบบอัตโนมัติ)
+        summary_view = df_raw.groupby(['Month_Year', 'Department', 'Risk_Type', 'Phase_or_Category', 'Risk_Subtype']).size().reset_index(name='Count_Actual')
+        
+        st.subheader("📊 ตารางรวมสถิติจำนวนครั้งที่เกิดแยกตามหัวข้อย่อยประจำเดือน")
+        st.dataframe(summary_view, use_container_width=True)
+        st.markdown("---")
+        
+        # 2. ฟอร์มสำหรับให้ Risk Manager เข้ามาเคาะประเมินคะแนนประจำเดือน
+        st.subheader("✍️ ส่วนลงคะแนนเข้าพิกัด Risk Matrix (ลงคะแนนทีละหัวข้อ)")
+        with st.form("evaluation_form"):
+            col_ev1, col_ev2 = st.columns(2)
+            with col_ev1:
+                # ให้เลือกหัวข้อจากที่มีประวัติการเกิดจริงในเดือนนั้นๆ
+                selected_index = st.selectbox("เลือกหัวข้อความเสี่ยงย่อยที่ต้องการประเมิน", summary_view.index, format_func=lambda x: f"[{summary_view.loc[x, 'Month_Year']}] - {summary_view.loc[x, 'Department']} : {summary_view.loc[x, 'Risk_Subtype']} (เกิดซ้ำ {summary_view.loc[x, 'Count_Actual']} ครั้ง)")
+            with col_ev2:
+                l_score = st.slider("คะแนนความถี่ประจำเดือน (Likelihood Score: 1-5)", 1, 5, 3, help="1:นานๆครั้ง, 3:ปานกลาง(รายเดือน), 5:บ่อยมาก(ทุกวัน)")
+                s_score = st.slider("คะแนนความรุนแรงของปัญหาประจำเดือน (Severity Score: 1-4)", 1, 4, 2, help="1:ต่ำมาก, 4:รุนแรงสูงมาก")
+
+            eval_submit = st.form_submit_button("💾 บันทึกผลประเมินประจำเดือนเข้าสรุป")
+            
+            if eval_submit:
+                row_data = summary_view.loc[selected_index]
+                
+                new_eval = pd.DataFrame([{
+                    "Month_Year": row_data['Month_Year'],
+                    "Department": row_data['Department'],
+                    "Risk_Type": row_data['Risk_Type'],
+                    "Phase_or_Category": row_data['Phase_or_Category'],
+                    "Risk_Subtype": row_data['Risk_Subtype'],
+                    "Count": row_data['Count_Actual'],
+                    "Likelihood": l_score,
+                    "Severity": s_score,
+                    "Risk_Score": l_score * s_score
+                }])
+                
+                # เช็กหากมีหัวข้อซ้ำเดิมให้ลบออกก่อน เพื่อบันทึกทับค่าใหม่ล่าสุด
+                if not st.session_state.monthly_summary.empty:
+                    st.session_state.monthly_summary = st.session_state.monthly_summary[
+                        ~((st.session_state.monthly_summary['Month_Year'] == row_data['Month_Year']) & 
+                          (st.session_state.monthly_summary['Risk_Subtype'] == row_data['Risk_Subtype']) &
+                          (st.session_state.monthly_summary['Department'] == row_data['Department']))
+                    ]
+                
+                st.session_state.monthly_summary = pd.concat([st.session_state.monthly_summary, new_eval], ignore_index=True)
+                st.success(f"ประเมินเรียบร้อย! หัวข้อ '{row_data['Risk_Subtype']}' ได้คะแนนความเสี่ยงรวม (Risk Score) = {l_score * s_score} คะแนน")
+
+        st.subheader("📋 ตารางผลการประเมินประจำเดือนที่พร้อมส่งขึ้นแดชบอร์ด")
+        st.dataframe(st.session_state.monthly_summary, use_container_width=True)
+
+# ==========================================
+# TAB 3: หน้าแดชบอร์ดและแผงควบคุมระบบความเสี่ยง
+# ==========================================
+with tab3:
+    st.header("📊 แดชบอร์ดวิเคราะห์และจัดลำดับความเสี่ยงห้องปฏิบัติการ")
+    
+    if st.session_state.monthly_summary.empty:
+        st.info("💡 กรุณาผ่านกระบวนการเคาะคะแนนประเมินในข้อที่ 2 (Tab 2) ก่อนเพื่อเปิดระบบการแสดงผลแดชบอร์ด")
+    else:
+        df_dash = st.session_state.monthly_summary.copy()
+        
+        # ส่วนตัวกรองข้อมูลบนแดชบอร์ดเพื่อความยืดหยุ่นในการดูข้อมูล
+        st.markdown("#### 🔍 ตัวกรองแดชบอร์ด (Filters)")
+        col_f1, col_f2 = st.columns(2)
+        with col_f1:
+            m_filter = st.multiselect("เลือกเดือนในการดูแดชบอร์ด", df_dash['Month_Year'].unique(), default=df_dash['Month_Year'].unique())
+        with col_f2:
+            d_filter = st.multiselect("เลือกแผนก/หน่วยงานต้นเหตุ", df_dash['Department'].unique(), default=df_dash['Department'].unique())
+            
+        # กรองข้อมูลตามตัวเลือก
+        df_filtered = df_dash[(df_dash['Month_Year'].isin(m_filter)) & (df_dash['Department'].isin(d_filter))]
+        
+        if df_filtered.empty:
+            st.warning("❌ ไม่พบข้อมูลตามเงื่อนไขที่เลือกในตัวกรอง")
+        else:
+            # ส่วนสรุปตัวเลขสถิติเบื้องต้น (KPI Blocks)
+            st.markdown("---")
+            kpi1, kpi2, kpi3 = st.columns(3)
+            kpi1.metric("จำนวนหัวข้อความเสี่ยงที่ได้รับการประเมิน", len(df_filtered))
+            kpi2.metric("จำนวนอุบัติการณ์ (รวมเกิดซ้ำ)", int(df_filtered['Count'].sum()))
+            kpi3.metric("คะแนนความเสี่ยงเฉลี่ยของหน่วยงาน", f"{df_filtered['Risk_Score'].mean():.2f}")
+            
+            st.markdown("---")
+            col_g1, col_g2 = st.columns([6, 4])
+            
+            with col_g1:
+                # กราฟแท่งจัดลำดับความสำคัญ (Risk Prioritization) เรียงจากมากไปน้อย
+                st.subheader("📌 อันดับความเสี่ยงเร่งด่วนประจำเดือน (Sort จากมากไปน้อย)")
+                df_sorted = df_filtered.sort_values(by="Risk_Score", ascending=True)
+                
+                # กำหนดโค้ดสีตามเกณฑ์ Risk Score เพื่อความเด่นชัดสแกนง่าย
+                colors = []
+                for score in df_sorted['Risk_Score']:
+                    if score >= 15: colors.append('crimson')      # แดง วิกฤต
+                    elif score >= 9: colors.append('darkorange')   # ส้ม สูง
+                    elif score >= 4: colors.append('gold')         # เหลือง ปานกลาง
+                    else: colors.append('forestgreen')             # เขียว ต่ำ
+                    
+                fig_bar = go.Figure(go.Bar(
+                    x=df_sorted['Risk_Score'],
+                    y=df_sorted['Risk_Subtype'],
+                    orientation='h',
+                    marker_color=colors,
+                    text=df_sorted['Risk_Score'],
+                    textposition='inside'
+                ))
+                fig_bar.update_layout(
+                    xaxis_title="คะแนนความเสี่ยงรวม (Risk Score)",
+                    yaxis_title="หัวข้อความเสี่ยงย่อย",
+                    height=500
+                )
+                st.plotly_chart(fig_bar, use_container_width=True)
+                
+            with col_g2:
+                # กราฟวงกลมแยกตาม Phase งานคลินิกและงานทั่วไป
+                st.subheader("🍰 สัดส่วนเหตุการณ์แยกตามหมวดงาน")
+                fig_pie = px.pie(df_filtered, names="Phase_or_Category", values="Count", hole=0.4,
+                                 color_discrete_sequence=px.colors.qualitative.Pastel)
+                st.plotly_chart(fig_pie, use_container_width=True)
+
+            st.markdown("---")
+            st.subheader("🧱 5x4 Interactive Risk Matrix (จำนวนเรื่องที่ตกลงในพิกัดความเสี่ยง)")
+            
+            # การสร้างตาราง Pivot สำหรับทำเป็นตาราง Risk Matrix โชว์นับตัวเรื่อง (Count Distinct)
+            matrix_df = pd.DataFrame(0, index=[5, 4, 3, 2, 1], columns=[1, 2, 3, 4])
+            
+            # นับจำนวนเรื่องจริงไปหยอดลงตาราง
+            for _, row in df_filtered.iterrows():
+                l, s = int(row['Likelihood']), int(row['Severity'])
+                if l in matrix_df.index and s in matrix_df.columns:
+                    matrix_df.loc[l, s] += 1
+            
+            # วาดตารางความเสี่ยงโดยใช้สไตล์มาร์กอัป HTML ตกแต่งตามเกณฑ์สากล
+            matrix_html = f"""
+            <table style="width:100%; border-collapse: collapse; text-align: center; font-family: sans-serif; font-weight: bold; border: 2px solid black;">
+                <tr style="background-color: #f2f2f2; border-bottom: 2px solid black;">
+                    <th style="padding: 12px; border-right: 2px solid black;">ความถี่ (Likelihood) \ ความรุนแรง (Severity)</th>
+                    <th style="width: 20%; background-color: #e2efda; border-right: 1px solid black;">1 (ต่ำมาก)</th>
+                    <th style="width: 20%; background-color: #fff2cc; border-right: 1px solid black;">2 (ต่ำ)</th>
+                    <th style="width: 20%; background-color: #fce4d6; border-right: 1px solid black;">3 (กลาง)</th>
+                    <th style="width: 20%; background-color: #f8cbad; border-right: 1px solid black;">4 (สูง)</th>
+                </tr>
+                <tr style="border-bottom: 1px solid gray;">
+                    <td style="background-color: #f2f2f2; padding: 12px; border-right: 2px solid black;">5 (บ่อยมาก)</td>
+                    <td style="background-color: #fff2cc; border-right: 1px solid black;">{matrix_df.loc[5, 1]} เรื่อง</td>
+                    <td style="background-color: #fce4d6; border-right: 1px solid black;">{matrix_df.loc[5, 2]} เรื่อง</td>
+                    <td style="background-color: #f8cbad; color: white; border-right: 1px solid black;">{matrix_df.loc[5, 3]} เรื่อง</td>
+                    <td style="background-color: #ffc7ce; color: #9c0006; border-right: 1px solid black;">{matrix_df.loc[5, 4]} เรื่อง</td>
+                </tr>
+                <tr style="border-bottom: 1px solid gray;">
+                    <td style="background-color: #f2f2f2; padding: 12px; border-right: 2px solid black;">4 (บ่อย)</td>
+                    <td style="background-color: #fff2cc; border-right: 1px solid black;">{matrix_df.loc[4, 1]} เรื่อง</td>
+                    <td style="background-color: #fce4d6; border-right: 1px solid black;">{matrix_df.loc[4, 2]} เรื่อง</td>
+                    <td style="background-color: #f8cbad; color: white; border-right: 1px solid black;">{matrix_df.loc[4, 3]} เรื่อง</td>
+                    <td style="background-color: #ffc7ce; color: #9c0006; border-right: 1px solid black;">{matrix_df.loc[4, 4]} เรื่อง</td>
+                </tr>
+                <tr style="border-bottom: 1px solid gray;">
+                    <td style="background-color: #f2f2f2; padding: 12px; border-right: 2px solid black;">3 (ปานกลาง)</td>
+                    <td style="background-color: #e2efda; border-right: 1px solid black;">{matrix_df.loc[3, 1]} เรื่อง</td>
+                    <td style="background-color: #fff2cc; border-right: 1px solid black;">{matrix_df.loc[3, 2]} เรื่อง</td>
+                    <td style="background-color: #fce4d6; border-right: 1px solid black;">{matrix_df.loc[3, 3]} เรื่อง</td>
+                    <td style="background-color: #f8cbad; color: white; border-right: 1px solid black;">{matrix_df.loc[3, 4]} เรื่อง</td>
+                </tr>
+                <tr style="border-bottom: 1px solid gray;">
+                    <td style="background-color: #f2f2f2; padding: 12px; border-right: 2px solid black;">2 (น้อย)</td>
+                    <td style="background-color: #e2efda; border-right: 1px solid black;">{matrix_df.loc[2, 1]} เรื่อง</td>
+                    <td style="background-color: #e2efda; border-right: 1px solid black;">{matrix_df.loc[2, 2]} เรื่อง</td>
+                    <td style="background-color: #fff2cc; border-right: 1px solid black;">{matrix_df.loc[2, 3]} เรื่อง</td>
+                    <td style="background-color: #fce4d6; border-right: 1px solid black;">{matrix_df.loc[2, 4]} เรื่อง</td>
+                </tr>
+                <tr>
+                    <td style="background-color: #f2f2f2; padding: 12px; border-right: 2px solid black;">1 (นานๆ ครั้ง)</td>
+                    <td style="background-color: #e2efda; border-right: 1px solid black;">{matrix_df.loc[1, 1]} เรื่อง</td>
+                    <td style="background-color: #e2efda; border-right: 1px solid black;">{matrix_df.loc[1, 2]} เรื่อง</td>
+                    <td style="background-color: #e2efda; border-right: 1px solid black;">{matrix_df.loc[1, 3]} เรื่อง</td>
+                    <td style="background-color: #fff2cc; border-right: 1px solid black;">{matrix_df.loc[1, 4]} เรื่อง</td>
+                </tr>
+            </table>
+            """
+            st.markdown(matrix_html, unsafe_allow_html=True)
+            st.caption("💡 เกณฑ์การตัดสี: เขียว (ต่ำ) | เหลือง (ปานกลาง) | ส้ม (สูง) | แดง (วิกฤต)")
