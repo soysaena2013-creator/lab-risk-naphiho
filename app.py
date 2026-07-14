@@ -4,7 +4,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 
-# 1. ตั้งค่าหน้าเว็บให้แสดงผลเต็มจอแบบสวยงาม
+# 1. ตั้งค่าหน้าเว็บให้แสดงผลเต็มจอ
 st.set_page_config(
     page_title="ระบบบันทึกความเสี่ยง - รพ.นาโพธิ์", 
     layout="wide",
@@ -27,23 +27,16 @@ if 'monthly_summary' not in st.session_state:
         "Month_Year", "Department", "Risk_Type", "Phase_or_Category", "Risk_Subtype", "Count", "Likelihood", "Severity", "Risk_Score"
     ])
 
-# ฟังก์ชันคำนวณ Likelihood อิงตามร้อยละของเหตุการณ์ทั้งหมดในรอบ 3 เดือน (ตามเกณฑ์รูปภาพล่าสุด)
-def calculate_likelihood_by_percentage(subtype_count, total_count_3m):
-    if total_count_3m == 0:
-        return 1, 0.0
-    
-    # คำนวณเป็นร้อยละ
-    percentage = (subtype_count / total_count_3m) * 100
-    
-    # เทียบเกณฑ์ตามตารางระบุในภาพ
-    if percentage < 1.0:
-        return 1, percentage  # เกิดขึ้นน้อยมาก (< 1%)
-    elif 1.0 <= percentage < 5.0:
-        return 2, percentage  # เกิดขึ้นบ้าง (1-5%)
-    elif 5.0 <= percentage <= 10.0:
-        return 3, percentage  # เกิดขึ้นบ่อย (5-10%)
-    else:
-        return 4, percentage  # เกิดขึ้นเป็นประจำ (> 10%)
+# ฟังก์ชันคำนวณ Likelihood ตามจำนวนครั้งย้อนหลัง 3 เดือน (เกณฑ์ใหม่ เข้าใจง่ายที่สุด)
+def calculate_likelihood_by_count(subtype_count_3m):
+    if subtype_count_3m < 1:
+        return 1
+    elif 1 <= subtype_count_3m <= 5:
+        return 2
+    elif 5 < subtype_count_3m <= 10:
+        return 3
+    else:  # มากกว่า 10 ครั้ง
+        return 4
 
 # ฟังก์ชันแปลงระดับความรุนแรงทางคลินิก A-I เป็นคะแนน Consequence (1-4)
 def map_clinical_severity_to_score(level):
@@ -205,7 +198,6 @@ with tab1:
             phase_or_cat = st.selectbox("ขั้นตอนที่เกิดความเสี่ยง (Phase)", ["Pre-analytical", "Analytical", "Post-analytical"])
             risk_subtype = st.selectbox("ระบุความเสี่ยงย่อยทางคลินิก", clinical_subtypes[phase_or_cat])
         with col_cl2:
-            # ล็อคหัวข้อ 2.1 รูปแบบเหตุการณ์ ตามที่กำหนดห้ามแก้ไขอีก
             event_type = st.selectbox(
                 "2.1 รูปแบบเหตุการณ์", 
                 [
@@ -275,7 +267,6 @@ with tab2:
         df_raw['Date_Parsed'] = pd.to_datetime(df_raw['Date'])
         df_raw['Month_Year'] = df_raw['Date_Parsed'].dt.strftime("%B %Y")
         
-        # จัดกลุ่มนับสถิติรายข้อเดี่ยว (Risk_Subtype) อย่างเป็นอิสระ โดยไม่จัดกลุ่มแผนกเข้ามาหารร่วม
         summary_view = df_raw.groupby(['Month_Year', 'Risk_Type', 'Phase_or_Category', 'Risk_Subtype']).size().reset_index(name='Count_Total')
         
         st.subheader("📊 ตารางสถิติจำนวนครั้งแยกรายความเสี่ยงย่อยประจำเดือน")
@@ -291,11 +282,11 @@ with tab2:
         
         row_data = summary_view.loc[selected_index]
         
-        # ค้นหาประวัติย้อนหลัง 3 เดือน เพื่อนำมาใช้คำนวณตามเกณฑ์ร้อยละ
+        # ค้นหาประวัติย้อนหลัง 3 เดือน เพื่อนำมานับความถี่ (Count)
         target_month_dt = datetime.strptime(row_data['Month_Year'], "%B %Y")
         three_months_ago = target_month_dt - timedelta(days=90)
         
-        # 1. จำนวนครั้งที่เกิดเฉพาะหัวข้อความเสี่ยงย่อยนี้ ย้อนหลัง 3 เดือน (ตัวตั้ง)
+        # ดึงสถิติย้อนหลัง 3 เดือนเฉพาะของความเสี่ยงย่อยที่เลือก
         df_3m_subtype = df_raw[
             (df_raw['Date_Parsed'] >= pd.Timestamp(three_months_ago)) & 
             (df_raw['Date_Parsed'] <= pd.Timestamp(target_month_dt + timedelta(days=31))) &
@@ -303,31 +294,23 @@ with tab2:
         ]
         subtype_count_3m = len(df_3m_subtype)
         
-        # 2. จำนวนอุบัติการณ์ทั้งหมดของห้องปฏิบัติการ ย้อนหลัง 3 เดือน (ตัวหารร่วม)
-        df_3m_total = df_raw[
-            (df_raw['Date_Parsed'] >= pd.Timestamp(three_months_ago)) & 
-            (df_raw['Date_Parsed'] <= pd.Timestamp(target_month_dt + timedelta(days=31)))
-        ]
-        total_count_3m = len(df_3m_total)
-        
-        # 3. คำนวณหาคะแนนระดับ Likelihood จากสูตรร้อยละ
-        computed_likelihood, calculated_pct = calculate_likelihood_by_percentage(subtype_count_3m, total_count_3m)
+        # คำนวณหาคะแนน Likelihood จากจำนวนครั้งตามเงื่อนไขใหม่ที่กำหนด
+        computed_likelihood = calculate_likelihood_by_count(subtype_count_3m)
         
         st.markdown(f"""
-        <div style="background-color:#f4f6f9; padding:20px; border-radius:10px; border-left:6px solid #007bff; margin-bottom:15px;">
-            <h4 style="margin-top:0px; color:#17a2b8;">📈 ผลการวิเคราะห์หาความถี่สะสมรายข้อเดี่ยว (Likelihood) ย้อนหลัง 3 เดือน:</h4>
-            <p>อิงตามสูตร: <b>(จำนวนครั้งของข้อนี้ / จำนวนครั้งทั้งหมดทุกข้อรวมกัน) x 100</b></p>
-            <ul style="font-size:15px; line-height:1.6;">
-                <li>หัวข้อความเสี่ยงย่อย: <b>"{row_data['Risk_Subtype']}"</b></li>
-                <li>จำนวนครั้งที่เกิดจริงเฉพาะข้อนี้: <b>{subtype_count_3m} ครั้ง</b></li>
-                <li>จำนวนครั้งรวมที่เกิดในห้องแล็บทั้งหมด: <b>{total_count_3m} ครั้ง</b></li>
-                <li>คิดเป็นร้อยละ: <b style="color:#007bff; font-size:18px;">{calculated_pct:.2f}%</b> ของทั้งหมด</li>
-                <li><b>ระดับโอกาสเกิดวิเคราะห์ได้ (Likelihood Score): {computed_likelihood} คะแนน</b></li>
+        <div style="background-color:#f4f6f9; padding:20px; border-radius:10px; border-left:6px solid #28a745; margin-bottom:15px;">
+            <h4 style="margin-top:0px; color:#28a745;">📈 ผลการคำนวณระดับความถี่ย้อนหลัง 3 เดือน:</h4>
+            <ul style="font-size:15px; line-height:1.6; list-style-type: none; padding-left: 0;">
+                <li>📌 หัวข้อความเสี่ยง: <b>"{row_data['Risk_Subtype']}"</b></li>
+                <li>🔄 เกิดขึ้นจริงย้อนหลัง 3 เดือน: <b style="color:#28a745; font-size:18px;">{subtype_count_3m} ครั้ง</b></li>
+                <li>📝 ได้คะแนนระดับโอกาสเกิด <b>(Likelihood Score): {computed_likelihood} คะแนน</b></li>
             </ul>
+            <span style="font-size:12px; color:gray;">
+                (เกณฑ์สถิติ: น้อยกว่า 1 ครั้ง = 1 คะแนน | 1-5 ครั้ง = 2 คะแนน | 5-10 ครั้ง = 3 คะแนน | มากกว่า 10 ครั้ง = 4 คะแนน)
+            </span>
         </div>
         """, unsafe_allow_html=True)
         
-        # ดึงระดับความรุนแรงจริงที่บันทึกไว้ในระบบขึ้นมาแสดงนำทาง
         latest_items = df_raw[
             (df_raw['Month_Year'] == row_data['Month_Year']) & 
             (df_raw['Risk_Subtype'] == row_data['Risk_Subtype'])
@@ -388,7 +371,7 @@ with tab2:
                 ]
             
             st.session_state.monthly_summary = pd.concat([st.session_state.monthly_summary, new_eval], ignore_index=True)
-            st.success(f"ประเมินสำเร็จ! [ความถี่ L: {computed_likelihood} ({calculated_pct:.1f}%)] + [ความรุนแรง C: {s_score}] = Risk Score {total_risk_score} คะแนน")
+            st.success(f"ประเมินสำเร็จ! [ความถี่ L: {computed_likelihood} ({subtype_count_3m} ครั้ง)] + [ความรุนแรง C: {s_score}] = Risk Score {total_risk_score} คะแนน")
 
         st.subheader("📋 ตารางผลการประเมินที่พร้อมขึ้นแดชบอร์ด")
         st.dataframe(st.session_state.monthly_summary, use_container_width=True)
@@ -462,7 +445,6 @@ with tab3:
             st.markdown("---")
             st.subheader("🧱 4x4 Interactive Risk Matrix (พิกัดตามระดับคะแนนผลรวม L + C)")
             
-            # สเก็ตพิกัดลงจุดใน Matrix
             matrix_df = pd.DataFrame(0, index=[4, 3, 2, 1], columns=[1, 2, 3, 4])
             
             for _, row in df_filtered.iterrows():
@@ -489,10 +471,10 @@ with tab3:
             <table style="width:100%; border-collapse: collapse; text-align: center; font-family: sans-serif; font-weight: bold; border: 2px solid black;">
                 <tr style="background-color: #f2f2f2; border-bottom: 2px solid black;">
                     <th style="padding: 12px; border-right: 2px solid black;">ความรุนแรง / ผลกระทบ (Consequence)</th>
-                    <th style="width: 22.5%; background-color: #eaeaea; border-right: 1px solid black;">เกิดขึ้นน้อยมาก (1)<br><span style="font-size:10px; font-weight:normal;">< 1%</span></th>
-                    <th style="width: 22.5%; background-color: #eaeaea; border-right: 1px solid black;">เกิดขึ้นบ้าง (2)<br><span style="font-size:10px; font-weight:normal;">1% - 5%</span></th>
-                    <th style="width: 22.5%; background-color: #eaeaea; border-right: 1px solid black;">เกิดขึ้นบ่อย (3)<br><span style="font-size:10px; font-weight:normal;">5% - 10%</span></th>
-                    <th style="width: 22.5%; background-color: #eaeaea; border-right: 1px solid black;">เกิดขึ้นเป็นประจำ (4)<br><span style="font-size:10px; font-weight:normal;">> 10%</span></th>
+                    <th style="width: 22.5%; background-color: #eaeaea; border-right: 1px solid black;">เกิดขึ้นน้อยมาก (1)<br><span style="font-size:10px; font-weight:normal;">< 1 ครั้ง ใน 3 เดือน</span></th>
+                    <th style="width: 22.5%; background-color: #eaeaea; border-right: 1px solid black;">เกิดขึ้นบ้าง (2)<br><span style="font-size:10px; font-weight:normal;">1 - 5 ครั้ง ใน 3 เดือน</span></th>
+                    <th style="width: 22.5%; background-color: #eaeaea; border-right: 1px solid black;">เกิดขึ้นบ่อย (3)<br><span style="font-size:10px; font-weight:normal;">5 - 10 ครั้ง ใน 3 เดือน</span></th>
+                    <th style="width: 22.5%; background-color: #eaeaea; border-right: 1px solid black;">เกิดขึ้นเป็นประจำ (4)<br><span style="font-size:10px; font-weight:normal;">> 10 ครั้ง ใน 3 เดือน</span></th>
                 </tr>
                 
                 <tr style="border-bottom: 1px solid gray;">
@@ -577,4 +559,4 @@ with tab3:
             </table>
             """
             st.markdown(matrix_html, unsafe_allow_html=True)
-            st.caption("🧱 สถิติจำนวนเรื่องบน Matrix จัดแบ่งโดยคำนวณคะแนนโอกาสเกิด (Likelihood) จากเปอร์เซ็นต์ผลรวมใน 3 เดือนจริง")
+            st.caption("🧱 พิกัดบน Matrix คำนวณแบบง่ายโดยอิงจากจำนวนครั้งที่เกิดขึ้นในรอบ 3 เดือนจริง")
