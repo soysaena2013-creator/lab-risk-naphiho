@@ -350,7 +350,7 @@ with tab2:
         eval_submit = st.button("💾 บันทึกผลประเมินรายข้อ")
         
         if eval_submit:
-            total_risk_score = computed_likelihood + s_score
+            total_risk_score = computed_likelihood * s_score
             
             new_eval = pd.DataFrame([{
                 "Month_Year": row_data['Month_Year'],
