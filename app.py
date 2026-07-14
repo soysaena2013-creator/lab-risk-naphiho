@@ -371,7 +371,7 @@ with tab2:
                 ]
             
             st.session_state.monthly_summary = pd.concat([st.session_state.monthly_summary, new_eval], ignore_index=True)
-            st.success(f"ประเมินสำเร็จ! [ความถี่ L: {computed_likelihood} ({subtype_count_3m} ครั้ง)] + [ความรุนแรง C: {s_score}] = Risk Score {total_risk_score} คะแนน")
+            st.success(f"ประเมินสำเร็จ! [ความถี่ L: {computed_likelihood} ({subtype_count_3m} ครั้ง)] * [ความรุนแรง C: {s_score}] = Risk Score {total_risk_score} คะแนน")
 
         st.subheader("📋 ตารางผลการประเมินที่พร้อมขึ้นแดชบอร์ด")
         st.dataframe(st.session_state.monthly_summary, use_container_width=True)
@@ -450,13 +450,13 @@ with tab3:
             for _, row in df_filtered.iterrows():
                 l = int(row['Likelihood'])
                 sev_val = str(row['Severity'])
-                if sev_val in ["A", "B", "C"]:
+                if sev_val in ["A", "B", ]:
                     s = 1
-                elif sev_val in ["D", "E", "F"]:
+                elif sev_val in ["C","D" ]:
                     s = 2
-                elif sev_val in ["G", "H"]:
+                elif sev_val in ["E", "F"]:
                     s = 3
-                elif sev_val == "I":
+                elif sev_val == ["G", "H","I"]:
                     s = 4
                 else:
                     try:
