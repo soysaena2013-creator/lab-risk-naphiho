@@ -27,7 +27,7 @@ if 'monthly_summary' not in st.session_state:
         "Month_Year", "Department", "Risk_Type", "Phase_or_Category", "Risk_Subtype", "Count", "Likelihood", "Severity", "Risk_Score"
     ])
 
-# ฟังก์ชันคำนวณระดับความถี่ (Likelihood) อัตโนมัติจากจำนวนครั้งที่เกิดจริงในเดือนนั้น
+# ฟังก์ชันคำนวณระดับความถี่ (Likelihood) อัตโนมัติจากจำนวนครั้งที่เกิดรวมของปัญหานั้นในเดือนนั้น
 def calculate_likelihood(count):
     if count == 1:
         return 1  # เกิดนานๆ ครั้ง
@@ -165,13 +165,12 @@ with tab1:
     c1, c2, c3 = st.columns(3)
     with c1:
         date_evt = st.date_input("1. วันที่เกิดความเสี่ยง", datetime.now())
-        # แก้ไขจุดที่ 2: เปลี่ยนเป็นช่องใส่ข้อความเวลา ให้สามารถพิมพ์แก้ไขเองได้อิสระ ไม่บล็อกเวลาปัจจุบัน
         time_evt_str = st.text_input("2. เวลาที่เกิดความเสี่ยง (รูปแบบ 24 ชม. เช่น 09:20, 15:45)", datetime.now().strftime("%H:%M"))
     with c2:
         shift_evt = st.selectbox("3. ช่วงเวรที่เกิดความเสี่ยง", ["เช้า", "บ่าย", "ดึก"])
         dept_evt = st.selectbox("4. หน่วยงานที่ทำให้เกิดความเสี่ยง", [
             "Lab", "IPD", "OPD", "ER", "LR", "VIP", "ปฐมภูมิและองค์รวม", 
-            "จิตเวชและยาเสพติด", "NCD", "ARI", "OR", "ยานพาหนะ", "เวรเจาะเลือด DM", "พยาบาลเจาะเลือดมาจากบ้าน"
+            "จิตเวชและยาเสพติด", "NCD", "ARI", "OR", "ยานพาหนะ", "เวรเจาะเลือด DM", "พยาบาลเจาะเลือดจากบ้าน"
         ])
     with c3:
         risk_type = st.radio(
@@ -243,24 +242,36 @@ with tab2:
         df_raw = st.session_state.raw_data.copy()
         df_raw['Month_Year'] = df_raw['Date'].apply(lambda x: datetime.strptime(x, "%Y-%m-%d").strftime("%B %Y"))
         
-        # จัดกลุ่มเพื่อหา "จำนวนครั้งที่เกิดจริง" แยกรายแผนกและตามข้อความเสี่ยงย่อย
-        summary_view = df_raw.groupby(['Month_Year', 'Department', 'Risk_Type', 'Phase_or_Category', 'Risk_Subtype']).size().reset_index(name='Count_Actual')
+        # [แก้ไขจุดสำคัญ] คำนวณจำนวนครั้งรวมแยกตามความเสี่ยงย่อยประจำเดือน (ไม่ผูกกับแผนก) เพื่อหา Likelihood
+        df_total_subtypes = df_raw.groupby(['Month_Year', 'Risk_Subtype']).size().reset_index(name='Total_Count_In_Month')
         
-        st.subheader("📊 ตารางรวมสถิติจำนวนครั้งที่เกิดแยกตามหัวข้อย่อยประจำเดือน")
+        # หาจำนวนครั้งที่เกิดแยกตามแผนกเพื่อเอาไว้แสดงผลและเลือกบันทึก
+        summary_view = df_raw.groupby(['Month_Year', 'Department', 'Risk_Type', 'Phase_or_Category', 'Risk_Subtype']).size().reset_index(name='Count_Dept')
+        
+        # นำจำนวนรวมของหัวข้อย่อยมารวมเข้ากับตารางจำแนกแผนก
+        summary_view = pd.merge(summary_view, df_total_subtypes, on=['Month_Year', 'Risk_Subtype'], how='left')
+        
+        st.subheader("📊 ตารางสถิติจำนวนครั้งแยกรายแผนก พร้อมยอดรวมของหัวข้อความเสี่ยงย่อยประจำเดือน")
         st.dataframe(summary_view, use_container_width=True)
         st.markdown("---")
         
-        st.subheader("✍️ ส่วนลงคะแนนความรุนแรง (คะแนนความถี่ Likelihood จะคำนวณตามจริงให้อัตโนมัติ)")
-        selected_index = st.selectbox("เลือกหัวข้อความเสี่ยงย่อยที่ต้องการประเมิน", summary_view.index, format_func=lambda x: f"[{summary_view.loc[x, 'Month_Year']}] - {summary_view.loc[x, 'Department']} : {summary_view.loc[x, 'Risk_Subtype']} (เกิดซ้ำจริง {summary_view.loc[x, 'Count_Actual']} ครั้ง)")
+        st.subheader("✍️ ส่วนลงคะแนนความรุนแรง (คะแนนความถี่ Likelihood คิดจากผลรวมความเสี่ยงย่อยอัตโนมัติ)")
+        selected_index = st.selectbox(
+            "เลือกหัวข้อความเสี่ยงย่อยที่ต้องการประเมิน", 
+            summary_view.index, 
+            format_func=lambda x: f"[{summary_view.loc[x, 'Month_Year']}] - {summary_view.loc[x, 'Department']} : {summary_view.loc[x, 'Risk_Subtype']} (เกิดที่แผนกนี้ {summary_view.loc[x, 'Count_Dept']} ครั้ง / ยอดรวมทั้ง รพ. {summary_view.loc[x, 'Total_Count_In_Month']} ครั้ง)"
+        )
         
         row_data = summary_view.loc[selected_index]
         
-        # แก้ไขจุดที่ 1: ดึงและแปลงจำนวนครั้ง (Count) เป็น Likelihood ตามสูตรจริงอัตโนมัติ ไม่ใช้ Slider มั่วแล้ว
-        computed_likelihood = calculate_likelihood(int(row_data['Count_Actual']))
-        st.info(f"📈 จากข้อมูลสถิติ: หัวข้อนี้เกิดขึ้น {row_data['Count_Actual']} ครั้งในเดือนนี้ -> ระบบแปลงเป็นคะแนนความถี่ (Likelihood Score) = **{computed_likelihood} คะแนน**")
+        # ดึงจำนวนครั้งรวมทั้งองค์กร (Total_Count_In_Month) มาคิด Likelihood แทนค่านับแยกแผนก
+        total_actual_count = int(row_data['Total_Count_In_Month'])
+        computed_likelihood = calculate_likelihood(total_actual_count)
         
-        # ผู้ใช้เลือกกรอกเฉพาะระดับความรุนแรง (Severity) ที่หน้างานประเมินได้
-        s_score = st.slider("ระบุคะแนนความรุนแรงของปัญหานี้ (Severity Score: 1-4)", 1, 4, 2)
+        st.info(f"📈 **การคิดคะแนนความถี่ (Likelihood):** ความเสี่ยงย่อย '{row_data['Risk_Subtype']}' เกิดขึ้นในภาพรวมโรงพยาบาลทั้งหมด **{total_actual_count} ครั้ง** ในเดือนนี้ -> ระบบแปลงเป็นคะแนนความถี่ร่วมกัน = **{computed_likelihood} คะแนน**")
+        
+        # ผู้ใช้เลือกกรอกระดับความรุนแรง (Severity) ของหน้างานแผนกนั้นๆ
+        s_score = st.slider(f"ระบุคะแนนความรุนแรงของปัญหานี้สำหรับแผนก {row_data['Department']} (Severity Score: 1-4)", 1, 4, 2)
 
         eval_submit = st.button("💾 บันทึกผลประเมินเข้าสู่แดชบอร์ด")
         
@@ -271,13 +282,13 @@ with tab2:
                 "Risk_Type": row_data['Risk_Type'],
                 "Phase_or_Category": row_data['Phase_or_Category'],
                 "Risk_Subtype": row_data['Risk_Subtype'],
-                "Count": int(row_data['Count_Actual']),
-                "Likelihood": computed_likelihood, # ใส่ค่าที่คำนวณตามความถี่จริง
+                "Count": int(row_data['Count_Dept']), # จำนวนครั้งที่เกิดในแผนกนั้นจริง
+                "Likelihood": computed_likelihood,    # ใช้ Likelihood ที่นับรวมทั้ง รพ. ของความเสี่ยงย่อยนี้
                 "Severity": s_score,
-                "Risk_Score": computed_likelihood * s_score # คะแนนความเสี่ยงที่แท้จริง
+                "Risk_Score": computed_likelihood * s_score # คะแนนความเสี่ยงรวม
             }])
             
-            # ลบแถวเก่าออกหากมีการกดประเมินหัวข้อเดิมซ้ำ
+            # ลบแถวเก่าออกหากมีการกดประเมินหัวข้อเดิมซ้ำของแผนกนั้น
             if not st.session_state.monthly_summary.empty:
                 st.session_state.monthly_summary = st.session_state.monthly_summary[
                     ~((st.session_state.monthly_summary['Month_Year'] == row_data['Month_Year']) & 
@@ -286,7 +297,7 @@ with tab2:
                 ]
             
             st.session_state.monthly_summary = pd.concat([st.session_state.monthly_summary, new_eval], ignore_index=True)
-            st.success(f"ประเมินเรียบร้อยตามจริง! ได้ Risk Score = {computed_likelihood} (ความถี่จริง) x {s_score} (ความรุนแรง) = {computed_likelihood * s_score} คะแนน")
+            st.success(f"ประเมินเรียบร้อย! [คะแนนความถี่รวม: {computed_likelihood}] x [ความรุนแรงแผนก: {s_score}] = Risk Score {computed_likelihood * s_score} คะแนน")
 
         st.subheader("📋 ตารางผลการประเมินประจำเดือนที่คำนวณตามจริงแล้ว")
         st.dataframe(st.session_state.monthly_summary, use_container_width=True)
@@ -336,7 +347,7 @@ with tab3:
                     
                 fig_bar = go.Figure(go.Bar(
                     x=df_sorted['Risk_Score'],
-                    y=df_sorted['Risk_Subtype'],
+                    y=df_sorted['Risk_Subtype'] + " (" + df_sorted['Department'] + ")",
                     orientation='h',
                     marker_color=colors,
                     text=df_sorted['Risk_Score'],
@@ -344,7 +355,7 @@ with tab3:
                 ))
                 fig_bar.update_layout(
                     xaxis_title="คะแนนความเสี่ยงรวม (Risk Score)",
-                    yaxis_title="หัวข้อความเสี่ยงย่อย",
+                    yaxis_title="หัวข้อความเสี่ยงย่อย (แผนก)",
                     height=500
                 )
                 st.plotly_chart(fig_bar, use_container_width=True)
@@ -396,7 +407,6 @@ with tab3:
                     <td style="background-color: #f8cbad; color: white; border-right: 1px solid black;">{matrix_df.loc[3, 4]} เรื่อง</td>
                 </tr>
                 <tr style="border-bottom: 1px solid gray;">
-                    <td style="background-color: #f2f2f2; padding: 12px; border-right: 2px solid black;">2 (น้อย)</td>
                     <td style="background-color: #e2efda; border-right: 1px solid black;">{matrix_df.loc[2, 1]} เรื่อง</td>
                     <td style="background-color: #e2efda; border-right: 1px solid black;">{matrix_df.loc[2, 2]} เรื่อง</td>
                     <td style="background-color: #fff2cc; border-right: 1px solid black;">{matrix_df.loc[2, 3]} เรื่อง</td>
