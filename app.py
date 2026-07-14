@@ -181,6 +181,7 @@ with tab1:
     st.markdown("---")
     st.subheader("รายละเอียดความเสี่ยงจำเพาะ")
     
+    # แยก UI และกล่องความรุนแรงตามประเภทความเสี่ยงอย่างชัดเจน
     if risk_type == "ความเสี่ยงทางคลินิก (Clinical Risk)":
         col_cl1, col_cl2 = st.columns(2)
         with col_cl1:
@@ -188,7 +189,8 @@ with tab1:
             risk_subtype = st.selectbox("ระบุความเสี่ยงย่อยทางคลินิก", clinical_subtypes[phase_or_cat])
         with col_cl2:
             event_type = st.selectbox("รูปแบบเหตุการณ์", ["Near Miss (เกือบพลาด - ดักจับได้ทันก่อนถึงผู้ป่วย)", "Miss / Incident (ผิดพลาด - หลุดไปถึงตัวผู้ป่วยแล้ว)"])
-            severity = st.selectbox("ระดับความรุนแรงทางคลินิก (Severity)", [
+            # แสดงเฉพาะเกณฑ์ทางคลินิก (Clinical Severity)
+            severity = st.selectbox("ระดับความรุนแรงทางคลินิก (Clinical Severity)", [
                 "1: ต่ำ (ระดับความรุนแรง A, B, C)", 
                 "2: ปานกลาง (ระดับความรุนแรง D, E, F)", 
                 "3: สูง (ระดับความรุนแรง G, H)", 
@@ -201,7 +203,8 @@ with tab1:
             risk_subtype = st.selectbox("ระบุความเสี่ยงย่อยทั่วไป", non_clinical_subtypes[phase_or_cat])
         with col_nc2:
             event_type = "Incident"
-            severity = st.selectbox("ระดับความรุนแรงทั่วไป (Severity)", [
+            # แสดงเฉพาะเกณฑ์ทั่วไป (Non-clinical Severity)
+            severity = st.selectbox("ระดับความรุนแรงทั่วไป (Non-clinical Severity)", [
                 "1: ต่ำ (ผลกระทบระดับน้อยมาก เสียหาย < 5,000 บาท)",
                 "2: ปานกลาง (ผลกระทบระดับปานกลาง เสียหาย 5,000 - 50,000 บาท)",
                 "3: สูง (ผลกระทบระดับสูง เสียหาย 50,001 - 500,000 บาท)",
@@ -286,7 +289,11 @@ with tab2:
         """, unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
         
-        s_score = st.slider(f"ระบุระดับความรุนแรง/ผลกระทบสำหรับแผนก {row_data['Department']} (Consequence Score: 1-4)", 1, 4, 2)
+        # ปรับการอธิบายตัวเลือกใน Slider ตอนประเมินหน้า Risk Manager ให้สอดคล้องกับประเภทความเสี่ยงที่เลือกด้วย
+        is_clinical = (row_data['Risk_Type'] == "ความเสี่ยงทางคลินิก (Clinical Risk)")
+        severity_label = "Consequence Score (ทางคลินิก: 1=A-C, 2=D-F, 3=G-H, 4=I)" if is_clinical else "Consequence Score (ทั่วไป: 1=ต่ำ, 2=กลาง, 3=สูง, 4=รุนแรงมาก)"
+        
+        s_score = st.slider(f"ระบุระดับความรุนแรงสำหรับแผนก {row_data['Department']}\n({severity_label})", 1, 4, 2)
 
         eval_submit = st.button("💾 บันทึกผลประเมินเข้าสู่แดชบอร์ด")
         
