@@ -193,7 +193,7 @@ with tab1:
     st.markdown("---")
     st.subheader("รายละเอียดความเสี่ยงจำเพาะ")
     
-    # แยก UI ความรุนแรงทางคลินิก (แยกทีละตัวอักษร A-I อย่างสมบูรณ์) และทางทั่วไปอย่างเด็ดขาด
+    # แยก UI ความรุนแรงทางคลินิก (แยกทีละตัวอักษร A-I) และทางทั่วไปอย่างเด็ดขาด
     if risk_type == "ความเสี่ยงทางคลินิก (Clinical Risk)":
         col_cl1, col_cl2 = st.columns(2)
         with col_cl1:
@@ -202,8 +202,8 @@ with tab1:
         with col_cl2:
             event_type = st.selectbox("รูปแบบเหตุการณ์", ["Near Miss (เกือบพลาด - ดักจับได้ทันก่อนถึงผู้ป่วย)", "Miss / Incident (ผิดพลาด - หลุดไปถึงตัวผู้ป่วยแล้ว)"])
             
-            # แก้ไขส่วนระดับความรุนแรงทางคลินิก แยกทีละตัวอักษร A - I ไม่จับกลุ่ม
-            severity = st.selectbox("ระดับความรุนแรงทางคลินิก (Clinical Severity - Severity Level)", [
+            # ระดับความรุนแรงทางคลินิก แยกรายระดับเดี่ยว A-I
+            severity = st.selectbox("ระดับความรุนแรงทางคลินิก (Clinical Severity)", [
                 "ระดับ A: ยังไม่เกิดกับผู้ป่วย แต่มีโอกาสที่จะเกิดความคลาดเคลื่อน",
                 "ระดับ B: เกิดความคลาดเคลื่อนขึ้นแล้ว แต่ยังไม่ถึงตัวผู้ป่วย",
                 "ระดับ C: เกิดความคลาดเคลื่อนถึงตัวผู้ป่วยแล้ว แต่ไม่ทำให้เกิดอันตราย",
@@ -222,23 +222,20 @@ with tab1:
         with col_nc2:
             event_type = "Incident"
             
-            # ความรุนแรงทั่วไปอิงเกณฑ์มูลค่าและความเสียหายระดับ 1-4
+            # เพิ่ม "เกณฑ์ด้านระยะเวลาการฟื้นฟูระบบ" ต่อท้ายมูลค่าเสียหายเพื่อความครบถ้วน
             severity = st.selectbox("ระดับความรุนแรงทั่วไป (Non-clinical Severity)", [
-                "ระดับ 1: ต่ำ (ผลกระทบระดับน้อยมาก เสียหาย < 5,000 บาท)",
-                "ระดับ 2: ปานกลาง (ผลกระทบระดับปานกลาง เสียหาย 5,000 - 50,000 บาท)",
-                "ระดับ 3: สูง (ผลกระทบระดับสูง เสียหาย 50,001 - 500,000 บาท)",
-                "ระดับ 4: สูงมาก (ผลกระทบระดับรุนแรง เสียหาย > 500,000 บาท ขึ้นไป)"
+                "ระดับ 1: ต่ำ (เสียหาย < 5,000 บาท หรือ กู้คืนระบบสำเร็จได้ภายใน 1 ชั่วโมง)",
+                "ระดับ 2: ปานกลาง (เสียหาย 5,000 - 50,000 บาท หรือ กู้คืนระบบสำเร็จภายใน 1 - 4 ชั่วโมง)",
+                "ระดับ 3: สูง (เสียหาย 50,001 - 500,000 บาท หรือ กู้คืนระบบสำเร็จภายใน 4 - 24 ชั่วโมง)",
+                "ระดับ 4: สูงมาก (เสียหาย > 500,000 บาท ขึ้นไป หรือ ระบบขัดข้องยาวนานกว่า 24 ชั่วโมง)"
             ])
 
     st.markdown("<br>", unsafe_allow_html=True)
     submit_btn = st.button("🚀 บันทึกรายงานความเสี่ยง เข้าสู่ระบบ")
     
     if submit_btn:
-        # สกัดค่าความรุนแรงตัวย่อไปบันทึก (เช่น "ระดับ A" -> "A" / "ระดับ 1" -> "1")
-        if risk_type == "ความเสี่ยงทางคลินิก (Clinical Risk)":
-            severity_value = severity.split(":")[0].replace("ระดับ ", "").strip()  # จะได้ค่าเป็น 'A', 'B', 'C', ..., 'I'
-        else:
-            severity_value = severity.split(":")[0].replace("ระดับ ", "").strip()  # จะได้ค่าเป็น '1', '2', '3', '4'
+        # สกัดค่าความรุนแรงย่อเพื่อบันทึก ('A'-'I' หรือ '1'-'4')
+        severity_value = severity.split(":")[0].replace("ระดับ ", "").strip()
         
         new_row = pd.DataFrame([{
             "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -270,7 +267,6 @@ with tab2:
         df_raw['Date_Parsed'] = pd.to_datetime(df_raw['Date'])
         df_raw['Month_Year'] = df_raw['Date_Parsed'].dt.strftime("%B %Y")
         
-        # จัดกลุ่มข้อมูลรายเดือนเพื่อเตรียมให้ผู้ดูแลมาทำการตรวจสอบและเคาะประเมิน
         summary_view = df_raw.groupby(['Month_Year', 'Department', 'Risk_Type', 'Phase_or_Category', 'Risk_Subtype']).size().reset_index(name='Count_Dept')
         
         st.subheader("📊 ตารางสถิติจำนวนครั้งแยกรายแผนกประจำเดือน")
@@ -314,7 +310,7 @@ with tab2:
         """, unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
         
-        # สกัดระดับความรุนแรงจริง (A-I หรือ 1-4) จากข้อมูลดิบล่าสุดในเดือนนั้นเพื่อไกด์ให้กับ Risk Manager
+        # แสดงระดับความรุนแรงจริง (A-I หรือ 1-4) ล่าสุดที่มีในระบบดิบ
         latest_items = df_raw[
             (df_raw['Month_Year'] == row_data['Month_Year']) & 
             (df_raw['Risk_Subtype'] == row_data['Risk_Subtype']) &
@@ -328,7 +324,6 @@ with tab2:
         
         if is_clinical:
             st.info(f"🔍 ข้อมูลระดับความรุนแรง (Severity) ที่ผู้ใช้งานกรอกเข้ามาในเดือนนี้คือ: **ระดับ {severity_display_str}**")
-            # ถ้าเป็นคลินิก จะแสดงสไลเดอร์ Consequence อิงตามการแปลงกลุ่ม A-I
             st.markdown("""
             **เกณฑ์แปลงจากระดับจริงเพื่อใช้คำนวณใน Matrix (Consequence Score):**
             * ระดับ **A, B, C** = 1 คะแนน (ต่ำ)
@@ -337,15 +332,21 @@ with tab2:
             * ระดับ **I** = 4 คะแนน (สูงมาก)
             """)
             
-            # คำนวณตั้งค่าเริ่มต้นตามระดับจริงที่กรอกมาล่าสุด
             default_score = 1
             if len(recorded_severities) > 0:
                 default_score = map_clinical_severity_to_score(recorded_severities[0])
                 
             s_score = st.slider("ระบุระดับ Consequence Score (1-4) เพื่อแปลงเข้าแกน Risk Matrix", 1, 4, default_score)
-            eval_severity_str = severity_display_str  # บันทึกระดับจริงเก็บไว้ด้วย
+            eval_severity_str = severity_display_str
         else:
             st.info(f"🔍 ข้อมูลระดับความรุนแรงที่กรอกเข้ามาในระบบคือ: **ระดับ {severity_display_str}**")
+            st.markdown("""
+            **เกณฑ์ระดับความรุนแรงทั่วไปตามมูลค่าและเวลาแก้ปัญหา:**
+            * ระดับ **1** (ต่ำ): เสียหาย < 5,000 บาท หรือ กู้คืนได้ภายใน 1 ชม.
+            * ระดับ **2** (กลาง): เสียหาย 5,000 - 50,000 บาท หรือ กู้คืนภายใน 1 - 4 ชม.
+            * ระดับ **3** (สูง): เสียหาย 50,001 - 500,000 บาท หรือ กู้คืนภายใน 4 - 24 ชม.
+            * ระดับ **4** (รุนแรงมาก): เสียหาย > 500,000 บาท หรือ ขัดข้องนานกว่า 24 ชม.
+            """)
             default_score = 1
             if len(recorded_severities) > 0:
                 try:
@@ -368,7 +369,7 @@ with tab2:
                 "Risk_Subtype": row_data['Risk_Subtype'],
                 "Count": int(row_data['Count_Dept']),
                 "Likelihood": computed_likelihood,
-                "Severity": eval_severity_str,  # บันทึกระดับความรุนแรงจริง (ตัวอักษร A-I หรือ ระดับ 1-4) เพื่อสืบค้นย้อนกลับได้ง่าย
+                "Severity": eval_severity_str,  # บันทึกระดับความรุนแรงจริง (A-I หรือ ระดับ 1-4)
                 "Risk_Score": total_risk_score
             }])
             
@@ -428,7 +429,7 @@ with tab3:
                     elif score == 4: colors.append('gold')          # เหลือง (ปานกลาง)
                     else: colors.append('forestgreen')              # เขียว (ต่ำ)
                 
-                # แสดงแถบกราฟ พร้อมระบุระดับความรุนแรงจริง (เช่น ระดับ A, ระดับ E) ต่อท้ายข้อความเพื่อให้เห็นชัดเจนโดยไม่ต้องสืบค้นย้อนหลัง
+                # แสดงระดับ Severity จริง (A-I หรือ ระดับ 1-4) บนหัวข้อกราฟ
                 labels = [
                     f"{row['Risk_Subtype']} ({row['Department']}) [Severity: {row['Severity']}]" 
                     for _, row in df_sorted.iterrows()
@@ -458,12 +459,11 @@ with tab3:
             st.markdown("---")
             st.subheader("🧱 4x4 Interactive Risk Matrix (พิกัดตามระดับคะแนนผลรวม L + C)")
             
-            # คำนวณสถิติเพื่อลงจุดบน Risk Matrix โดยแปลงความรุนแรงกลับเป็นพิกัดแกน 1-4
+            # คำนวณเพื่อนำลงจุดบน Risk Matrix
             matrix_df = pd.DataFrame(0, index=[4, 3, 2, 1], columns=[1, 2, 3, 4])
             
             for _, row in df_filtered.iterrows():
                 l = int(row['Likelihood'])
-                # ใช้ฟังก์ชันเพื่อแปลงระดับจริง (A-I หรือตัวเลข) มาเป็นตัวระบุพิกัด 1-4 ใน Matrix
                 sev_val = str(row['Severity'])
                 if sev_val in ["A", "B", "C"]:
                     s = 1
@@ -474,7 +474,7 @@ with tab3:
                 elif sev_val == "I":
                     s = 4
                 else:
-                    # กรณีเป็นความเสี่ยงทั่วไป เช่น "ระดับ 2" หรือค่าตัวเลข
+                    # แปลงค่าความรุนแรงทั่วไปกลับเป็นคะแนน
                     try:
                         s = int(sev_val.replace("ระดับ", "").strip())
                     except:
