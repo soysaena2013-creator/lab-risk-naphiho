@@ -27,10 +27,10 @@ if 'monthly_summary' not in st.session_state:
         "Month_Year", "Department", "Risk_Type", "Phase_or_Category", "Risk_Subtype", "Count", "Likelihood", "Severity", "Risk_Score"
     ])
 
-# ฟังก์ชันคำนวณ Likelihood อิงตามร้อยละของเหตุการณ์ทั้งหมดในรอบ 3 เดือน
+# ฟังก์ชันคำนวณ Likelihood อิงตามร้อยละของเหตุการณ์ทั้งหมดในรอบ 3 เดือน (ตามเกณฑ์รูปภาพล่าสุด)
 def calculate_likelihood_by_percentage(subtype_count, total_count_3m):
     if total_count_3m == 0:
-        return 1
+        return 1, 0.0
     
     # คำนวณเป็นร้อยละ
     percentage = (subtype_count / total_count_3m) * 100
@@ -57,7 +57,7 @@ def map_clinical_severity_to_score(level):
         return 4  # สูงมาก
     return 1
 
-# 3. จัดเตรียม Master Data รายการความเสี่ยงย่อยตามเอกสารโรงพยาบาล
+# 3. รายการข้อมูลดิบดั้งเดิมทั้งหมด (Original Master Data)
 non_clinical_subtypes = {
     "สิ่งแวดล้อมทางกายภาพ": [
         "อุณหภูมิห้องสูงหรือแกว่งเกินไป (Temperature Fluctuation)",
@@ -99,7 +99,7 @@ non_clinical_subtypes = {
         "เจ้าหน้าที่ควบคุมอารมณ์ไม่ได้ เมื่อเผชิญหน้ากับผู้รับบริการที่กำลังโกรธ",
         "การประชดประชัน กระแทกกระทั้นสิ่งของ เพื่อแสดงออกถึงความไม่พอใจ",
         "การใช้น้ำเสียงหรือคำพูดเชิงตำหนิพยาบาลหรือเจ้าหน้าที่ส่งแล็บอย่างรุนแรงเมื่อส่งสิ่งส่งตรวจผิดพลาด",
-        "แสดงพฤติกรรมบริการที่ดีกับผู้ป่วยบางกลุ่ม แต่ละเลยหรือปฏิบัติด้วยท่าทีที่แย่กว่ากับผู้ป่วยกลุ่มอื่น",
+        "แสดงพฤติกรรมบริการที่ดีกับผู้ป่วยบางกลุ่ม แต่ละละเลยหรือปฏิบัติด้วยท่าทีที่แย่กว่ากับผู้ป่วยกลุ่มอื่น",
         "ไม่อยู่ประจำจุดบริการในเวลาที่กำหนด หรือปล่อยให้ผู้ป่วยยืนรอหน้าห้องแล็บเป็นเวลานาน",
         "พขร. ไม่นำเลือดที่ผ่านการ cross match แล้วกลับมาด้วย",
         "พขร. ลืมนำถุงเลือดลงจากรถ",
@@ -180,7 +180,7 @@ department_list = [
 tab1, tab2, tab3 = st.tabs(["📝 1. บันทึกความเสี่ยงออนไลน์", "🧮 2. ประเมินรายเดือน (Risk Manager)", "📊 3. แดชบอร์ดและ Risk Matrix"])
 
 # ==========================================
-# TAB 1: หน้าบันทึกความเสี่ยงออนไลน์
+# TAB 1: หน้าบันทึกความเสี่ยงออนไลน์ (คงรายละเอียดดั้งเดิมทั้งหมด)
 # ==========================================
 with tab1:
     st.header("แบบฟอร์มรายงานอุบัติการณ์และความเสี่ยง")
@@ -220,7 +220,7 @@ with tab1:
     else:
         col_nc1, col_nc2 = st.columns(2)
         with col_nc1:
-            phase_or_cat = st.selectbox("ลักษณะความเสี่ยงทั่วไป", ["สิ่งแวดล้อมทางกายภาพ", "ระบบ IT/คอมพิวเตอร์", "ระบบสาธารณูปโภค", "พฤทีพฤติกรรมบริการและการสื่อสาร"])
+            phase_or_cat = st.selectbox("ลักษณะความเสี่ยงทั่วไป", ["สิ่งแวดล้อมทางกายภาพ", "ระบบ IT/คอมพิวเตอร์", "ระบบสาธารณูปโภค", "พฤติกรรมบริการและการสื่อสาร"])
             risk_subtype = st.selectbox("ระบุความเสี่ยงย่อยทั่วไป", non_clinical_subtypes[phase_or_cat])
         with col_nc2:
             event_type = "Incident"
@@ -256,7 +256,7 @@ with tab1:
 
 
 # ==========================================
-# TAB 2: หน้าสรุปและประเมินรายเดือนสำหรับ Risk Manager
+# TAB 2: หน้าสรุปและประเมินรายเดือนสำหรับ Risk Manager (ใช้สูตรคำนวณร้อยละแบบตัดการรวมแผนก)
 # ==========================================
 with tab2:
     st.header("🧮 ส่วนงานประเมินสถิติและเคาะคะแนน Risk Matrix")
@@ -268,13 +268,14 @@ with tab2:
         df_raw['Date_Parsed'] = pd.to_datetime(df_raw['Date'])
         df_raw['Month_Year'] = df_raw['Date_Parsed'].dt.strftime("%B %Y")
         
+        # จัดกลุ่มนับสถิติรายข้อเดี่ยว (Risk_Subtype) อย่างเป็นอิสระ โดยไม่จัดกลุ่มแผนกเข้ามาหารร่วม
         summary_view = df_raw.groupby(['Month_Year', 'Risk_Type', 'Phase_or_Category', 'Risk_Subtype']).size().reset_index(name='Count_Total')
         
         st.subheader("📊 ตารางสถิติจำนวนครั้งแยกรายความเสี่ยงย่อยประจำเดือน")
         st.dataframe(summary_view, use_container_width=True)
         st.markdown("---")
         
-        st.subheader("✍️ ส่วนลงคะแนนความรุนแรง (วิเคราะห์หาอัตราส่วนร้อยละเทียบกับผลรวมทั้งหมดราย 3 เดือน)")
+        st.subheader("✍️ ส่วนประเมินและวิเคราะห์ระดับโอกาสเกิดย้อนหลัง 3 เดือน")
         selected_index = st.selectbox(
             "เลือกหัวข้อความเสี่ยงย่อยที่ต้องการประเมินคะแนน", 
             summary_view.index, 
@@ -283,11 +284,11 @@ with tab2:
         
         row_data = summary_view.loc[selected_index]
         
-        # ค้นหาประวัติย้อนหลัง 3 เดือน เพื่อนำมาเป็นตัวตั้งและตัวหารร่วม
+        # ค้นหาประวัติย้อนหลัง 3 เดือน เพื่อนำมาใช้คำนวณตามเกณฑ์ร้อยละ
         target_month_dt = datetime.strptime(row_data['Month_Year'], "%B %Y")
         three_months_ago = target_month_dt - timedelta(days=90)
         
-        # 1. ตัวตั้ง: จำนวนครั้งที่เกิดเฉพาะหัวข้อความเสี่ยงย่อยนี้ ย้อนหลัง 3 เดือน
+        # 1. จำนวนครั้งที่เกิดเฉพาะหัวข้อความเสี่ยงย่อยนี้ ย้อนหลัง 3 เดือน (ตัวตั้ง)
         df_3m_subtype = df_raw[
             (df_raw['Date_Parsed'] >= pd.Timestamp(three_months_ago)) & 
             (df_raw['Date_Parsed'] <= pd.Timestamp(target_month_dt + timedelta(days=31))) &
@@ -295,31 +296,31 @@ with tab2:
         ]
         subtype_count_3m = len(df_3m_subtype)
         
-        # 2. ตัวหารร่วม: จำนวนอุบัติการณ์ความเสี่ยงทั้งหมดของห้องปฏิบัติการ ย้อนหลัง 3 เดือน
+        # 2. จำนวนอุบัติการณ์ทั้งหมดของห้องปฏิบัติการ ย้อนหลัง 3 เดือน (ตัวหารร่วม)
         df_3m_total = df_raw[
             (df_raw['Date_Parsed'] >= pd.Timestamp(three_months_ago)) & 
             (df_raw['Date_Parsed'] <= pd.Timestamp(target_month_dt + timedelta(days=31)))
         ]
         total_count_3m = len(df_3m_total)
         
-        # 3. คำนวณหาคะแนนระดับ Likelihood จากเกณฑ์อัตราส่วนร้อยละ
+        # 3. คำนวณหาคะแนนระดับ Likelihood จากสูตรร้อยละ
         computed_likelihood, calculated_pct = calculate_likelihood_by_percentage(subtype_count_3m, total_count_3m)
         
         st.markdown(f"""
         <div style="background-color:#f4f6f9; padding:20px; border-radius:10px; border-left:6px solid #007bff; margin-bottom:15px;">
-            <h4 style="margin-top:0px; color:#17a2b8;">📈 ผลการประเมิน Likelihood แยกรายข้อ (ย้อนหลัง 3 เดือน)</h4>
-            <p>เทียบเกณฑ์ <b>"ร้อยละของจำนวนครั้งที่เกิดทั้งหมดในรอบ 3 เดือน"</b></p>
+            <h4 style="margin-top:0px; color:#17a2b8;">📈 ผลการวิเคราะห์หาความถี่สะสมรายข้อเดี่ยว (Likelihood) ย้อนหลัง 3 เดือน:</h4>
+            <p>อิงตามสูตร: <b>(จำนวนครั้งของข้อนี้ / จำนวนครั้งทั้งหมดทุกข้อรวมกัน) x 100</b></p>
             <ul style="font-size:15px; line-height:1.6;">
                 <li>หัวข้อความเสี่ยงย่อย: <b>"{row_data['Risk_Subtype']}"</b></li>
-                <li>จำนวนครั้งที่เกิดเฉพาะข้อนี้: <b>{subtype_count_3m} ครั้ง</b></li>
-                <li>จำนวนครั้งที่เกิดรวมทุกข้อในห้องปฏิบัติการ: <b>{total_count_3m} ครั้ง</b></li>
-                <li>คิดเป็นอัตราส่วน: <b style="color:#007bff; font-size:18px;">{calculated_pct:.2f}%</b> ของทั้งหมด</li>
-                <li><b>คะแนน Likelihood ที่วิเคราะห์ได้: ระดับ {computed_likelihood}</b> ({'เกิดขึ้นน้อยมาก (< 1%)' if computed_likelihood==1 else 'เกิดขึ้นบ้าง (1-5%)' if computed_likelihood==2 else 'เกิดขึ้นบ่อย (5-10%)' if computed_likelihood==3 else 'เกิดขึ้นเป็นประจำ (> 10%)'})</li>
+                <li>จำนวนครั้งที่เกิดจริงเฉพาะข้อนี้: <b>{subtype_count_3m} ครั้ง</b></li>
+                <li>จำนวนครั้งรวมที่เกิดในห้องแล็บทั้งหมด: <b>{total_count_3m} ครั้ง</b></li>
+                <li>คิดเป็นร้อยละ: <b style="color:#007bff; font-size:18px;">{calculated_pct:.2f}%</b> ของทั้งหมด</li>
+                <li><b>ระดับโอกาสเกิดวิเคราะห์ได้ (Likelihood Score): {computed_likelihood} คะแนน</b></li>
             </ul>
         </div>
         """, unsafe_allow_html=True)
         
-        # ดึงค่าความรุนแรงจริงที่บันทึกไว้ในระบบ
+        # ดึงระดับความรุนแรงจริงที่บันทึกไว้ในระบบขึ้นมาแสดงนำทาง
         latest_items = df_raw[
             (df_raw['Month_Year'] == row_data['Month_Year']) & 
             (df_raw['Risk_Subtype'] == row_data['Risk_Subtype'])
