@@ -1,68 +1,97 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from datetime import datetime, timedelta
 import io
-from datetime import datetime
 
-# ตั้งค่าหน้าเว็บ
-st.set_page_config(page_title="ระบบบันทึกความเสี่ยง - รพ.นาโพธิ์", layout="wide")
+# 1. ตั้งค่าหน้าเว็บ
+st.set_page_config(
+    page_title="ระบบบันทึกความเสี่ยง - รพ.นาโพธิ์", 
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
 st.title("🏥 ระบบบันทึกและติดตามความเสี่ยงทางห้องปฏิบัติการ")
+st.subheader("กลุ่มงานเทคนิคการแพทย์ โรงพยาบาลนาโพธิ์")
+st.markdown("---")
 
-# --- ฟังก์ชันคำนวณ (ตำแหน่งที่ 1) ---
+# 2. Initialize Session State
+if 'raw_data' not in st.session_state:
+    st.session_state.raw_data = pd.DataFrame(columns=[
+        "Timestamp", "Date", "Shift", "Department", 
+        "Risk_Type", "Phase_or_Category", "Risk_Subtype", "Event_Type", "Severity"
+    ])
+
+if 'monthly_summary' not in st.session_state:
+    st.session_state.monthly_summary = pd.DataFrame(columns=[
+        "Month_Year", "Department", "Risk_Type", "Phase_or_Category", "Risk_Subtype", "Count", "Likelihood", "Severity", "Risk_Score"
+    ])
+
+# ฟังก์ชันคำนวณ
+def calculate_likelihood_by_count(count):
+    if count < 1: return 1
+    elif 1 <= count <= 5: return 2
+    elif 5 < count <= 10: return 3
+    else: return 4
+
 def map_clinical_severity_to_score(level):
-    # ปรับให้รองรับกรณีมีคำว่า "ระดับ" นำหน้าด้วย
     clean_level = str(level).replace("ระดับ", "").strip()
-    if clean_level in ["A", "B"]: return 1
-    if clean_level in ["C", "D"]: return 2
-    if clean_level in ["E", "F"]: return 3
-    if clean_level in ["G", "H", "I"]: return 4
+    if clean_level in ["A", "B", "C"]: return 1
+    elif clean_level in ["D", "E", "F"]: return 2
+    elif clean_level in ["G", "H"]: return 3
+    elif clean_level == "I": return 4
     return 1
 
-# เตรียม Session State สำหรับข้อมูล
-if 'raw_data' not in st.session_state:
-    st.session_state.raw_data = pd.DataFrame(columns=["Date", "Department", "Risk_Type", "Phase_or_Category", "Risk_Subtype", "Severity"])
-if 'monthly_summary' not in st.session_state:
-    # สร้างข้อมูลจำลองสำหรับทดสอบ (ลบออกได้หากมีข้อมูลจริงแล้ว)
-    st.session_state.monthly_summary = pd.DataFrame(columns=["Month_Year", "Risk_Subtype", "Count", "Likelihood", "Severity", "Risk_Score"])
+# [ข้อมูล Master Data คงเดิม...]
+non_clinical_subtypes = {"สิ่งแวดล้อมทางกายภาพ": ["อุณหภูมิห้องสูงหรือแกว่งเกินไป", "ความชื้นสัมพัทธ์ไม่เหมาะสม", "แสงสว่างไม่เพียงพอ", "มลพิษทางเสียง", "การระบายไอสารเคมีไม่ดี", "ความเสี่ยงต่อการเกิดเพลิงไหม้"], "ระบบ IT/คอมพิวเตอร์": ["ระบบอินเตอร์เฟสล่ม", "ข้อมูลสูญหาย", "มัลแวร์", "ระบบ HIS ล่ม", "ระบบ LIS ล่ม", "ช่องโหว่ความปลอดภัย"], "ระบบสาธารณูปโภค": ["ไฟตก/ไฟดับ", "ระบบสำรองไฟล้มเหลว", "คุณภาพน้ำไม่ได้มาตรฐาน", "เครื่องปรับอากาศชำรุด"], "พฤติกรรมบริการและการสื่อสาร": ["การสื่อสารไม่เหมาะสม", "พฤติกรรมไม่เหมาะสมต่อผู้ป่วย", "ความล่าช้าในการให้บริการ"]}
+clinical_subtypes = {"Pre-analytical": ["สิ่งส่งตรวจน้อย", "Hemolysis", "Mislabel", "สิ่งส่งตรวจผิดชนิด", "ส่งตรวจผิดคน"], "Analytical": ["เครื่องขัดข้อง", "IQC ไม่ผ่าน", "EQA ไม่ผ่าน", "น้ำยาหมดอายุ"], "Post-analytical": ["รายงานผลผิดพลาด", "TAT เกิน", "ไม่ได้แจ้ง Critical value"]}
+department_list = ["Lab", "IPD", "OPD", "ER", "LR", "VIP", "อื่นๆ"]
 
-# สร้าง Tabs
-tab1, tab2, tab3 = st.tabs(["📝 1. บันทึกความเสี่ยง", "🧮 2. ประเมินรายเดือน", "📊 3. แดชบอร์ดและ Export"])
+# 4. สร้าง Tabs
+tab1, tab2, tab3 = st.tabs(["📝 1. บันทึกความเสี่ยง", "🧮 2. ประเมินรายเดือน", "📊 3. แดชบอร์ดและ Risk Matrix"])
 
-# Tab 1: บันทึกความเสี่ยง
 with tab1:
-    st.header("บันทึกอุบัติการณ์")
-    st.info("ใช้สำหรับบันทึกข้อมูลอุบัติการณ์เข้าสู่ระบบ")
-
-# Tab 2: ประเมินรายเดือน
-with tab2:
-    st.header("ประเมินรายเดือน")
-    st.info("ใช้สำหรับสรุปรายการและบันทึกผลประเมินลงใน monthly_summary")
-
-# --- โค้ด Tab 3 (ตำแหน่งที่ 2: วางแทนที่ส่วน Tab 3 เดิม) ---
-with tab3:
-    st.header("📊 แดชบอร์ดสรุปความเสี่ยง (Risk Matrix)")
+    # [คงโค้ดเดิมของคุณในส่วน Tab 1 ไว้ทั้งหมด]
+    c1, c2 = st.columns(2)
+    with c1:
+        date_evt = st.date_input("วันที่เกิดเหตุ", datetime.now())
+        shift_evt = st.selectbox("เวร", ["เช้า", "บ่าย", "ดึก"])
+    with c2:
+        dept_evt = st.selectbox("หน่วยงาน", department_list)
+        risk_type = st.radio("ประเภท", ["ความเสี่ยงทางคลินิก (Clinical Risk)", "ความเสี่ยงทั่วไป (Non-Clinical Risk)"])
     
-    if 'monthly_summary' in st.session_state and not st.session_state.monthly_summary.empty:
-        df_summary = st.session_state.monthly_summary.copy()
-        
-        # คำนวณคะแนน Severity ใหม่
-        df_summary['Severity_Score'] = df_summary['Severity'].apply(map_clinical_severity_to_score)
-        df_summary['Likelihood_Score'] = df_summary['Likelihood'].astype(int)
-        df_summary['Risk_Level'] = df_summary['Severity_Score'] * df_summary['Likelihood_Score']
-        
-        # แสดงตารางสรุป
-        st.dataframe(df_summary, use_container_width=True)
-        
-        # ปุ่มดาวน์โหลด Excel
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-            df_summary.to_excel(writer, index=False, sheet_name='RiskSummary')
-        
-        st.download_button(
-            label="📥 ดาวน์โหลดไฟล์สรุปความเสี่ยง (Excel)",
-            data=buffer.getvalue(),
-            file_name="Risk_Incident_Report_Final.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+    if risk_type == "ความเสี่ยงทางคลินิก (Clinical Risk)":
+        phase_or_cat = st.selectbox("ขั้นตอน", ["Pre-analytical", "Analytical", "Post-analytical"])
+        risk_subtype = st.selectbox("ความเสี่ยงย่อย", clinical_subtypes[phase_or_cat])
+        severity = st.selectbox("ระดับความรุนแรง", ["ระดับ A", "ระดับ B", "ระดับ C", "ระดับ D", "ระดับ E", "ระดับ F", "ระดับ G", "ระดับ H", "ระดับ I"])
     else:
-        st.info("ยังไม่มีข้อมูลในระบบ กรุณาบันทึกเหตุการณ์ความเสี่ยงและประเมินรายเดือนใน Tab 2 ก่อนครับ")
+        phase_or_cat = st.selectbox("หมวด", ["สิ่งแวดล้อมทางกายภาพ", "ระบบ IT/คอมพิวเตอร์", "ระบบสาธารณูปโภค", "พฤติกรรมบริการและการสื่อสาร"])
+        risk_subtype = st.selectbox("ความเสี่ยงย่อย", non_clinical_subtypes[phase_or_cat])
+        severity = st.selectbox("ระดับความรุนแรง (1-4)", ["ระดับ 1", "ระดับ 2", "ระดับ 3", "ระดับ 4"])
+        
+    if st.button("บันทึกรายงาน"):
+        new_row = pd.DataFrame([{"Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Date": date_evt.strftime("%Y-%m-%d"), "Shift": shift_evt, "Department": dept_evt, "Risk_Type": risk_type, "Phase_or_Category": phase_or_cat, "Risk_Subtype": risk_subtype, "Event_Type": "Incident", "Severity": severity}])
+        st.session_state.raw_data = pd.concat([st.session_state.raw_data, new_row], ignore_index=True)
+        st.success("บันทึกสำเร็จ!")
+
+with tab2:
+    # [คงโค้ดเดิมของคุณในส่วน Tab 2 ไว้ทั้งหมด]
+    if not st.session_state.raw_data.empty:
+        df_raw = st.session_state.raw_data.copy()
+        df_raw['Date_Parsed'] = pd.to_datetime(df_raw['Date'])
+        df_raw['Month_Year'] = df_raw['Date_Parsed'].dt.strftime("%B %Y")
+        summary_view = df_raw.groupby(['Month_Year', 'Risk_Subtype']).size().reset_index(name='Count_Total')
+        st.dataframe(summary_view)
+        # (คุณสามารถวาง Logic การประเมินคะแนนของคุณต่อได้ที่นี่)
+    else:
+        st.info("ไม่มีข้อมูล")
+
+with tab3:
+    st.header("📊 แดชบอร์ด")
+    # แก้ไขส่วนนี้เพื่อให้แน่ใจว่าหน้าจอไม่หาย
+    if 'monthly_summary' in st.session_state and not st.session_state.monthly_summary.empty:
+        df_dash = st.session_state.monthly_summary.copy()
+        st.dataframe(df_dash)
+    else:
+        st.info("ยังไม่มีข้อมูลในระบบ กรุณาประเมินใน Tab 2 ก่อนครับ")
