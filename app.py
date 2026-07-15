@@ -3,17 +3,14 @@ import pandas as pd
 import io
 from datetime import datetime
 
-# 1. ตั้งค่าหน้าเว็บ
+# ตั้งค่าหน้าเว็บ
 st.set_page_config(page_title="ระบบบันทึกความเสี่ยง - รพ.นาโพธิ์", layout="wide")
 
-# 2. ฟังก์ชันคำนวณ (ส่วนที่ 1)
-def calculate_likelihood_by_count(subtype_count_3m):
-    if subtype_count_3m < 1: return 1
-    elif 1 <= subtype_count_3m <= 5: return 2
-    elif 5 < subtype_count_3m <= 10: return 3
-    else: return 4
+st.title("🏥 ระบบบันทึกและติดตามความเสี่ยงทางห้องปฏิบัติการ")
 
+# --- ฟังก์ชันคำนวณ (ตำแหน่งที่ 1) ---
 def map_clinical_severity_to_score(level):
+    # ปรับให้รองรับกรณีมีคำว่า "ระดับ" นำหน้าด้วย
     clean_level = str(level).replace("ระดับ", "").strip()
     if clean_level in ["A", "B"]: return 1
     if clean_level in ["C", "D"]: return 2
@@ -21,36 +18,34 @@ def map_clinical_severity_to_score(level):
     if clean_level in ["G", "H", "I"]: return 4
     return 1
 
-# 3. เตรียมตัวแปร Session State
+# เตรียม Session State สำหรับข้อมูล
 if 'raw_data' not in st.session_state:
     st.session_state.raw_data = pd.DataFrame(columns=["Date", "Department", "Risk_Type", "Phase_or_Category", "Risk_Subtype", "Severity"])
 if 'monthly_summary' not in st.session_state:
+    # สร้างข้อมูลจำลองสำหรับทดสอบ (ลบออกได้หากมีข้อมูลจริงแล้ว)
     st.session_state.monthly_summary = pd.DataFrame(columns=["Month_Year", "Risk_Subtype", "Count", "Likelihood", "Severity", "Risk_Score"])
 
-# 4. หน้าจอหลัก
-st.title("🏥 ระบบบันทึกและติดตามความเสี่ยงทางห้องปฏิบัติการ")
+# สร้าง Tabs
 tab1, tab2, tab3 = st.tabs(["📝 1. บันทึกความเสี่ยง", "🧮 2. ประเมินรายเดือน", "📊 3. แดชบอร์ดและ Export"])
 
 # Tab 1: บันทึกความเสี่ยง
 with tab1:
     st.header("บันทึกอุบัติการณ์")
-    # (เพิ่มโค้ดบันทึกของคุณตรงนี้ หากมี)
     st.info("ใช้สำหรับบันทึกข้อมูลอุบัติการณ์เข้าสู่ระบบ")
 
 # Tab 2: ประเมินรายเดือน
 with tab2:
     st.header("ประเมินรายเดือน")
-    # (เพิ่มโค้ดประเมินของคุณตรงนี้ หากมี)
     st.info("ใช้สำหรับสรุปรายการและบันทึกผลประเมินลงใน monthly_summary")
 
-# Tab 3: แดชบอร์ดและ Export (ส่วนที่ 2 ที่คุณต้องการ)
+# --- โค้ด Tab 3 (ตำแหน่งที่ 2: วางแทนที่ส่วน Tab 3 เดิม) ---
 with tab3:
     st.header("📊 แดชบอร์ดสรุปความเสี่ยง (Risk Matrix)")
     
     if 'monthly_summary' in st.session_state and not st.session_state.monthly_summary.empty:
         df_summary = st.session_state.monthly_summary.copy()
         
-        # คำนวณคะแนน Severity ใหม่และ Risk Score
+        # คำนวณคะแนน Severity ใหม่
         df_summary['Severity_Score'] = df_summary['Severity'].apply(map_clinical_severity_to_score)
         df_summary['Likelihood_Score'] = df_summary['Likelihood'].astype(int)
         df_summary['Risk_Level'] = df_summary['Severity_Score'] * df_summary['Likelihood_Score']
