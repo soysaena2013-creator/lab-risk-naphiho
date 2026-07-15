@@ -560,3 +560,17 @@ with tab3:
             """
             st.markdown(matrix_html, unsafe_allow_html=True)
             st.caption("🧱 พิกัดบน Matrix คำนวณแบบง่ายโดยอิงจากจำนวนครั้งที่เกิดขึ้นในรอบ 3 เดือนจริง")
+	def save_risk_data_to_excel(df):
+    # กำหนดชื่อไฟล์ตามเดือนและปี
+    filename = "Risk_Incident_Report.xlsx"
+    
+    # หากไฟล์มีอยู่แล้ว ให้โหลดมาแล้วเพิ่มข้อมูลต่อท้าย หรือสร้างใหม่หากยังไม่มี
+    if os.path.exists(filename):
+        existing_df = pd.read_excel(filename)
+        updated_df = pd.concat([existing_df, df], ignore_index=True)
+    else:
+        updated_df = df
+        
+    # บันทึกลงไฟล์ Excel
+    updated_df.to_excel(filename, index=False)
+    return filename
